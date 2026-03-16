@@ -16,21 +16,22 @@ claw skill install baiye1997/HuaHuaDailyMCP
 
 ## 配置
 
-在 OpenClaw 的 MCP 配置中添加：
-
-```json
-{
-  "mcpServers": {
-    "baiye-fund": {
-      "command": "python",
-      "args": ["/path/to/server.py"],
-      "env": {
-        "BAIYE_AGENT_TOKEN": "从 App 设置页生成的 Agent 令牌"
+  在 OpenClaw/Claude Desktop 配置文件中添加：
+  {
+    "mcpServers": {
+      "huahua-daily": {
+        "command": "python",
+        "args": ["/path/to/mcp-server/server.py"],
+        "env": {
+          "BAIYE_AGENT_TOKEN": "从 App 设置页生成并复制的 Agent 令牌"
+        }
       }
     }
   }
-}
-```
+
+认证说明：
+  使用 BAIYE_AGENT_TOKEN 环境变量（推荐），或运行时调用 set_token 工具。
+"""
 
 ## 获取 Agent Token
 
