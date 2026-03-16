@@ -16,6 +16,7 @@ claw skill install baiye1997/HuaHuaDailyMCP
 
 ## 配置
 
+让 OpenClaw 等 AI agent 通过 MCP 协议直接访问花花日记的数据与功能。
   在 OpenClaw/Claude Desktop 配置文件中添加：
   {
     "mcpServers": {
