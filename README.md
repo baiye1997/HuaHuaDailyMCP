@@ -18,6 +18,7 @@ claw skill install baiye1997/HuaHuaDailyMCP
 
 让 OpenClaw 等 AI agent 通过 MCP 协议直接访问花花日记的数据与功能。
   在 OpenClaw/Claude Desktop 配置文件中添加：
+```bash
   {
     "mcpServers": {
       "huahua-daily": {
@@ -29,6 +30,7 @@ claw skill install baiye1997/HuaHuaDailyMCP
       }
     }
   }
+```
 
 认证说明：
   使用 BAIYE_AGENT_TOKEN 环境变量（推荐），或运行时调用 set_token 工具。
