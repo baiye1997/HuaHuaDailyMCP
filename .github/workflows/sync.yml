@@ -1,0 +1,51 @@
+name: Sync from baiye-fund
+
+on:
+  schedule:
+    # 每天 UTC 0:00 运行（北京时间 8:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout HuaHuaDailyMCP
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch latest mcp-server from baiye-fund
+        run: |
+          # 使用 PAT 访问私有仓库
+          git clone --branch claude/openclaw-skills-IgwY8 --single-branch \
+            https://x-access-token:${{ secrets.SOURCE_TOKEN }}@github.com/baiye1997/baiye-fund.git \
+            /tmp/source
+
+      - name: Sync mcp-server files
+        run: |
+          # 同步 mcp-server 目录下的所有文件到根目录
+          cp /tmp/source/mcp-server/SKILL.md .
+          cp /tmp/source/mcp-server/requirements.txt .
+          cp /tmp/source/mcp-server/server.py .
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git add SKILL.md requirements.txt server.py
+          git commit -m "chore: sync from baiye-fund/openclaw-skills branch"
+          git push
