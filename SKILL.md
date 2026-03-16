@@ -34,44 +34,59 @@ mcporter call huahua-daily.<工具名> 参数名=值 --output json
 
 # 输出格式规范
 
-**核心原则：一条消息说完，简洁优雅，Discord 友好（禁用 markdown 表格）**
+**核心原则：一条消息说完，只用 Discord 支持的格式（无表格）**
+
+## Discord 支持的格式
+
+```
+**粗体**
+*斜体* 或 _斜体_
+__下划线__
+~~删除线~~
+`代码`
+```代码块```
+> 引用
+||剧透||
+```
+
+---
 
 ## 用户信息 `get_current_user`
 
 ```
-👤 **{nickname}** (`{username}`)
-UID: {uid} | {'VIP✨' if vip else '普通用户'}
-{'Pro会员至 ' + pro_expires_at[:10] if pro else ''}
+👤 **{nickname}** `{username}`
+UID: {uid} | VIP✨
+Pro会员至 {pro_date}
 ```
 
 ## 资产摘要 `get_summary`
 
 ```
 📊 **资产总览**
-💰 总市值: **{totalMarketValue:,.2f}**
-📈 累计收益: **{cumulativeProfit:+,.2f}** ({totalReturnRate:+.2%})
-📅 今日收益: {todayProfit:+,.2f}
-🔢 持仓: {heldItemCount}支 | 在途: {totalInTransitAmount}
+💰 总市值: **{totalMarketValue:,.0f}**
+📈 累计收益: **{cumulativeProfit:+,.0f}** ({totalReturnRate:+.2%})
+📅 今日: {todayProfit:+,.0f}
+🔢 持仓 {heldItemCount}支 | 在途 {totalInTransitAmount}
 ```
 
 ## 持仓记录 `get_records`
 
-**单条消息，智能截断（Top 5 + 盈亏王）**
+**单条消息，Top 5 + 盈亏王**
 
 ```
-📊 **持仓总览** | {heldItemCount}支 | 市值 {totalMarketValue:,.0f}
+📊 **持仓** | {count}支 | 市值 {total:,.0f}
 
-**Top 5 持仓**
-• **{name1}** `{code1}` — {value1:,.0f} | {profit1:+,.0f} ({rate1:+.1%})
-• {name2} `{code2}` — {value2:,.0f} | {profit2:+,.0f} ({rate2:+.1%})
-• {name3} `{code3}` — {value3:,.0f} | {profit3:+,.0f} ({rate3:+.1%})
-• {name4} `{code4}` — {value4:,.0f} | {profit4:+,.0f} ({rate4:+.1%})
-• {name5} `{code5}` — {value5:,.0f} | {profit5:+,.0f} ({rate5:+.1%})
+**Top 5**
+• **{name1}** `{code1}` — {value:,.0f} | {profit:+,.0f} ({rate:+.1%})
+• {name2} `{code2}` — {value:,.0f} | {profit:+,.0f} ({rate:+.1%})
+• {name3} `{code3}` — {value:,.0f} | {profit:+,.0f} ({rate:+.1%})
+• {name4} `{code4}` — {value:,.0f} | {profit:+,.0f} ({rate:+.1%})
+• {name5} `{code5}` — {value:,.0f} | {profit:+,.0f} ({rate:+.1%})
 
-🏆 **盈利王**: {best_name} `{best_code}` +{best_profit:,.0f} ({best_rate:+.1%})
-💀 **亏损王**: {worst_name} `{worst_code}` {worst_profit:,.0f} ({worst_rate:+.1%})
+🏆 盈利王: {best_name} `{best_code}` +{best:,.0f}
+💀 亏损王: {worst_name} `{worst_code}` {worst:,.0f}
 
-📄 累计收益: **{cumulativeProfit:+,.0f}** ({cumulativeRate:+.2%})
+📄 累计 **{cumulative:+,.0f}** ({rate:+.2%})
 ```
 
 ## 大盘概览 `get_overview`
@@ -79,9 +94,9 @@ UID: {uid} | {'VIP✨' if vip else '普通用户'}
 ```
 🌍 **今日大盘**
 
-上证 {sh_value:.1f} ({sh_change:+.2%}) | 深证 {sz_value:.0f} ({sz_change:+.2%})
-创业板 {cy_value:.0f} ({cy_change:+.2%}) | 科创50 {kc_value:.0f} ({kc_change:+.2%})
-恒生 {hs_value:.0f} ({hs_change:+.2%}) | 纳指 {nq_value:.0f} ({nq_change:+.2%})
+上证 {sh:,.1f} ({sh_pct:+.2%}) | 深证 {sz:,.0f} ({sz_pct:+.2%})
+创业板 {cy:,.0f} ({cy_pct:+.2%}) | 科创 {kc:,.0f} ({kc_pct:+.2%})
+恒生 {hs:,.0f} ({hs_pct:+.2%}) | 纳指 {nq:,.0f} ({nq_pct:+.2%})
 ```
 
 ## 项目详情 `get_item_detail`
@@ -91,14 +106,13 @@ UID: {uid} | {'VIP✨' if vip else '普通用户'}
 ```
 📈 **{name}** `{code}`
 
-**持仓** | 市值 {marketValue:,.0f} | 收益 {profit:+,.0f} ({rate:+.1%})
-份额 {shares:,.2f} | 成本 {costPrice:.4f} | 净值 {nav:.4f}
-预估: {estimateNav:.4f} ({estimateChange:+.2%})
+**持仓** 市值 {value:,.0f} | 收益 {profit:+,.0f} ({rate:+.1%})
+份额 {shares:,.2f} | 成本 {cost:.4f} | 净值 {nav:.4f}
+预估 {est:.4f} ({est_pct:+.2%})
 
-**交易记录** ({transaction_count}笔)
-{最近一笔: 日期 类型 金额 净值}
+**交易** {最近一笔: 日期 类型 金额}
 
-**前5重仓** | {stock1} {p1:.1%} | {stock2} {p2:.1%} | {stock3} {p3:.1%} | {stock4} {p4:.1%} | {stock5} {p5:.1%}
+**重仓** {s1} {p1:.1%} | {s2} {p2:.1%} | {s3} {p3:.1%}
 
 💡 {简要点评}
 ```
@@ -110,10 +124,10 @@ UID: {uid} | {'VIP✨' if vip else '普通用户'}
 ```
 🔍 **搜索结果**
 
-• **{name1}** `{code1}` — {type1}
-• **{name2}** `{code2}` — {type2}
-• **{name3}** `{code3}` — {type3}
-(共 {total} 条结果)
+• **{name1}** `{code1}` — {type}
+• **{name2}** `{code2}` — {type}
+• **{name3}** `{code3}` — {type}
+(共 {total} 条)
 ```
 
 ## 涨跌排行 `get_daily_rank`
@@ -122,26 +136,26 @@ UID: {uid} | {'VIP✨' if vip else '普通用户'}
 📊 **今日排行** | {date}
 
 🚀 **涨幅榜**
-1. {name1} `{code1}` +{rate1:.2%}
-2. {name2} `{code2}` +{rate2:.2%}
-3. {name3} `{code3}` +{rate3:.2%}
+1. {name} `{code}` +{rate:.2%}
+2. {name} `{code}` +{rate:.2%}
+3. {name} `{code}` +{rate:.2%}
 
 📉 **跌幅榜**
-1. {name1} `{code1}` {rate1:.2%}
-2. {name2} `{code2}` {rate2:.2%}
-3. {name3} `{code3}` {rate3:.2%}
+1. {name} `{code}` {rate:.2%}
+2. {name} `{code}` {rate:.2%}
+3. {name} `{code}` {rate:.2%}
 ```
 
 ---
 
 # 格式要点
 
-1. **数字格式化**: 金额用千分位，收益率用百分比，保留合理精度
-2. **收益标记**: 正数用 `+` 前缀和绿色/加粗，负数保持原样
+1. **数字格式化**: 金额千分位，收益率百分比，保留合理精度
+2. **收益标记**: 正数 `+` 前缀 + 加粗，负数保持原样
 3. **代码高亮**: 用反引号包裹基金代码
-4. **层级清晰**: 用换行和空行分隔不同区块
+4. **用换行分块**: 空行分隔不同信息区块
 5. **智能精简**: 
    - 持仓超过5支只显示 Top 5 + 盈亏王
-   - 交易记录超过3笔只显示最近一笔
-   - 重仓股只显示前5
-6. **单条消息**: 所有输出必须能装进一条 Discord 消息（2000字符内）
+   - 交易记录只显示最近一笔
+   - 重仓股只显示前3
+6. **单条消息**: 所有输出 ≤2000 字符
