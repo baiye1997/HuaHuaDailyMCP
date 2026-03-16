@@ -1,12 +1,12 @@
 # HuaHuaDailyMCP
 
-基金投资助手 MCP 技能 - 让 OpenClaw 连通你的基金数据。
+🌸花花日记助手 MCP 技能 - 让 OpenClaw 连通你的养猫数据。
 
 ## 功能
 
-- 查询基金净值、收益、持仓
-- 管理买卖记录
-- 获取大盘行情
+- 查询猫粮净值、储粮增加、仓库
+- 管理储粮记录
+- 获取喵市行情
 
 ## 安装
 
@@ -25,7 +25,6 @@ claw skill install baiye1997/HuaHuaDailyMCP
       "command": "python",
       "args": ["/path/to/server.py"],
       "env": {
-        "BAIYE_API_BASE": "https://你的域名.zeabur.app",
         "BAIYE_AGENT_TOKEN": "从 App 设置页生成的 Agent 令牌"
       }
     }
@@ -35,7 +34,7 @@ claw skill install baiye1997/HuaHuaDailyMCP
 
 ## 获取 Agent Token
 
-1. 打开白也基金 App → 设置页
+1. 打开花花日记 App端/网页端 → 设置页
 2. 点击「Agent 访问令牌」
 3. 点击「生成新令牌」，完成邮箱验证
 4. 复制一次性显示的令牌
