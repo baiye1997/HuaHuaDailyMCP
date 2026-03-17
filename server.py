@@ -292,8 +292,9 @@ async def get_records() -> dict:
                 batch_data = result.get("data", result) if isinstance(result, dict) else result
                 if isinstance(batch_data, list):
                     for item in batch_data:
-                        if item.get("code"):
-                            estimate_map[item["code"]] = item
+                        code_key = item.get("fundcode") or item.get("code")
+                        if code_key:
+                            estimate_map[code_key] = item
         except Exception:
             pass
 
