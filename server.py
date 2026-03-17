@@ -38,7 +38,7 @@ _session: dict = {
     "base_url": os.environ.get("BAIYE_API_BASE", _OFFICIAL_API).rstrip("/"),
 }
 
-mcp = FastMCP("huahua-daily", description="花花日记助手 MCP Server — 查询数据、概览、记录，管理日常条目")
+mcp = FastMCP("huahua-daily")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
