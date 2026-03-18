@@ -44,7 +44,7 @@ ClawHub 主页：https://clawhub.ai/baiye1997/huahua-daily
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/baiye1997/baiye-fund#subdirectory=mcp-server",
+        "git+https://github.com/baiye1997/HuaHuaDailyMCP#subdirectory=mcp-server",
         "huahua-daily"
       ],
       "env": {
@@ -60,8 +60,8 @@ ClawHub 主页：https://clawhub.ai/baiye1997/huahua-daily
 先克隆仓库并安装依赖：
 
 ```bash
-git clone https://github.com/baiye1997/baiye-fund.git
-cd baiye-fund/mcp-server
+git clone https://github.com/baiye1997/HuaHuaDailyMCP.git
+cd HuaHuaDailyMCP
 pip install -r requirements.txt
 ```
 
@@ -72,7 +72,7 @@ pip install -r requirements.txt
   "mcpServers": {
     "huahua-daily": {
       "command": "python",
-      "args": ["/你的路径/baiye-fund/mcp-server/server.py"],
+      "args": ["/你的路径/HuaHuaDailyMCP/server.py"],
       "env": {
         "BAIYE_AGENT_TOKEN": "粘贴你的 Agent 令牌"
       }

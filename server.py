@@ -8,7 +8,7 @@ HuahuaDaily MCP Server (OpenClaw Skills)
   {
     "huahua-daily": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/baiye1997/baiye-fund#subdirectory=mcp-server", "huahua-daily"],
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
       "env": {
         "BAIYE_AGENT_TOKEN": "从 App 设置页生成并复制的 Agent 令牌"
       }
