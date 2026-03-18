@@ -60,8 +60,8 @@ ClawHub 主页：https://clawhub.ai/baiye1997/huahua-daily
 先克隆仓库并安装依赖：
 
 ```bash
-git clone https://github.com/baiye1997/HuaHuaDailyMCP.git
-cd HuaHuaDailyMCP
+git clone https://github.com/baiye1997/HuaHuaDailyMCP.git skills/huahua-daily
+cd skills/huahua-daily
 pip install -r requirements.txt
 ```
 
@@ -72,7 +72,7 @@ pip install -r requirements.txt
   "mcpServers": {
     "huahua-daily": {
       "command": "python",
-      "args": ["/你的路径/HuaHuaDailyMCP/server.py"],
+      "args": ["/你的路径/skills/huahua-daily/server.py"],
       "env": {
         "BAIYE_AGENT_TOKEN": "粘贴你的 Agent 令牌"
       }
