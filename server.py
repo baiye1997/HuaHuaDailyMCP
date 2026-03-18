@@ -538,7 +538,10 @@ async def get_records() -> dict:
     - watchlist: 观察列记录（无持仓，仅供参考）
     - summary: 持仓汇总（总市值/今日收益/持有收益/持有收益率/累计收益/收益率/在途金额）
       - totalHoldingProfit: 持有收益总额（市值 - 成本，不含落袋/已实现收益）
-      - totalHoldingReturnRate: 持有收益率（持有收益 / 成本 × 100%）
+      - totalHoldingReturnRate: 持有收益率（totalHoldingProfit / totalCost × 100%，仅反映浮动亏盈）
+      - cumulativeProfit: 累计收益（持有收益 + 已实现收益，含落袋）
+      - totalReturnRate: 累计收益率（cumulativeProfit / totalCost × 100%，含落袋，综合回报率）
+      注意：totalReturnRate ≠ totalHoldingReturnRate，前者含已实现收益，后者仅持仓浮动
     - dataUpdatedAt: 云同步数据的最后更新时间（UTC），展示给用户让其知晓数据新鲜度
     """
     _require_token()
@@ -585,7 +588,7 @@ async def get_records() -> dict:
             {"date": tx.get("date"), "amount": tx.get("amount"), "note": tx.get("note")}
             for tx in txs if tx.get("status") == "PENDING" and tx.get("type") == "BUY"
         ]
-        in_transit_amount = _r2(sum(tx.get("amount", 0) for tx in pending_buy_txs))
+        in_transit_amount = _r2(sum((tx.get("amount") or 0) for tx in pending_buy_txs))
         enriched["inTransitAmount"] = in_transit_amount
         if pending_buy_txs:
             enriched["pendingBuyTransactions"] = pending_buy_txs
