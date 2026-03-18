@@ -29,7 +29,7 @@ clawhub install huahua-daily
 
 安装后在 OpenClaw 配置中添加环境变量 `BAIYE_AGENT_TOKEN`。
 
-ClawHub 主页：https://clawhub.com/skills/baiye1997/huahua-daily
+ClawHub 主页：https://clawhub.ai/baiye1997/huahua-daily
 
 ### 第四步：在 mcporter.json 中添加配置（手动安装）
 
