@@ -30,9 +30,7 @@ jobs:
       - name: Sync mcp-server files
         run: |
           # 同步 mcp-server 目录下的所有文件到根目录
-          cp /tmp/source/mcp-server/SKILL.md .
-          cp /tmp/source/mcp-server/requirements.txt .
-          cp /tmp/source/mcp-server/server.py .
+          cp /tmp/source/mcp-server/* .
 
       - name: Check for changes
         id: check_changes
@@ -46,6 +44,6 @@ jobs:
       - name: Commit and push
         if: steps.check_changes.outputs.has_changes == 'true'
         run: |
-          git add SKILL.md requirements.txt server.py
+          git add .
           git commit -m "chore: sync from baiye-fund/main branch"
           git push
