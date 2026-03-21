@@ -669,6 +669,7 @@ async def request_transaction(
     amount: float,
     date: str = "",
     note: str = "",
+    group_name: str = "",
 ) -> str:
     """
     向用户的 App 发送一条交易请求信号。
@@ -678,6 +679,9 @@ async def request_transaction(
     重要：调用前须向用户确认基金名称和代码无误，尤其是通过搜索推断出来的代码。
     发送后须告知用户"需在 App 中确认才会生效"，不要让用户误以为已执行。
 
+    如用户说"XX分组的XX基金买入XX元"，请从 get_records 获取分组信息后填入 group_name。
+    App 会按分组名精确匹配，匹配失败时降级为弹出分组选择器。
+
     Args:
         item_code: 项目编号，如 "110022"
         item_name: 项目名称，如 "易方达消费行业"
@@ -685,6 +689,7 @@ async def request_transaction(
         amount: 金额（元），如 10000.00
         date: 操作日期 YYYY-MM-DD，留空则由 App 使用今日
         note: 备注说明（可选）
+        group_name: 目标分组名称（可选），如 "沪深宽基"；有值时 App 直接路由到该分组
 
     Returns:
         str: 发送结果提示
@@ -694,17 +699,22 @@ async def request_transaction(
     if tx_type not in ("BUY", "SELL"):
         return "❌ record_type 必须是 'BUY' 或 'SELL'"
 
-    payload = json.dumps({
+    payload_dict: dict = {
         "code": item_code,
         "name": item_name,
-        "amount": round(amount, 2),  # 保留两位小数，避免浮点序列化漂移（如 1000.0000000001）
+        "amount": round(amount, 2),  # 保留两位小数，避免浮点序列化漂移
         "date": date,
         "note": note,
-    }, ensure_ascii=False)
+    }
+    if group_name:
+        payload_dict["group_name"] = group_name
+
+    payload = json.dumps(payload_dict, ensure_ascii=False)
 
     await _post("/api/agent/request", {"action_type": tx_type, "payload": payload})
     action = "买入" if tx_type == "BUY" else "卖出"
-    return f"✅ {action}请求已发送：{item_name}（{item_code}）¥{amount:,.2f}，请打开 App 确认后生效。"
+    group_hint = f"（分组：{group_name}）" if group_name else ""
+    return f"✅ {action}请求已发送：{item_name}（{item_code}）¥{amount:,.2f}{group_hint}，请打开 App 确认后生效。"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
