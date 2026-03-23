@@ -1,7 +1,7 @@
 ---
 name: huahua-daily
 description: 花花日记助手 - 查询用户的基金持仓、今日收益、累计收益、市场行情等数据，并可向 App 发送交易请求信号
-version: 1.0.0
+version: 1.1.0
 author: baiye1997
 permissions: 网络访问权限（用于查询花花日记后端 API）
 metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BAIYE_AGENT_TOKEN","emoji":"🌸","os":["darwin","linux","win32"]}}
@@ -23,6 +23,9 @@ metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BA
 - 用户说："帮我搜一下华夏基金"、"查一下这只基金的费率"
 - 用户说："帮我看看这只基金近一年排名"、"今天走势怎么样？"
 - 用户说："我想买 1000 元易方达消费"、"帮我发一个卖出请求"
+- 用户说："我的基金跑赢大盘了吗？"、"帮我对比一下沪深300"
+- 用户说："今天下午买入，什么时候确认份额？"、"T+2 是哪天？"
+- 用户说："中秋节后第一个交易日是哪天？"、"这个日期能买基金吗？"
 
 ## 3. How to use
 
@@ -37,7 +40,18 @@ metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BA
 
 4. **查询市场整体**：调用 `get_overview` 或 `get_indices`；
 
-5. **发送交易信号**：
+5. **基准对比**：
+   - 调用 `get_benchmark_history("sh000300")` 获取沪深300历史走势；
+   - 结合 `get_item_history(code)` 的持仓基金历史，对比两者涨跌幅；
+   - 常用指数代码：`sh000300`（沪深300）、`sh000001`（上证）、`sz399001`（深证成指）；
+
+6. **买卖日期规划**：
+   - 调用 `get_next_trading_day(date)` 确认某日是否为交易日及下一交易日；
+   - 调用 `calculate_trading_dates(date, time_mode, confirm_days)` 推算净值日/确认日；
+     - `time_mode`：`"PRE_MARKET"`（收盘前买入）或 `"POST_MARKET"`（收盘后买入）；
+     - `confirm_days`：T+1（货币/债基），T+2（股票/混合），T+3（QDII）；
+
+7. **发送交易信号**：
    - 若 code 来自搜索结果，须先向用户确认：「是【基金名 code:XXXXXX】吗？确认后我来发送请求。」
    - 用户确认后再调用 `request_transaction`；
    - 调用完成后明确告知：「信号已发送，请打开 App 确认后才会生效，AI 不会直接执行交易。」
@@ -66,12 +80,15 @@ metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BA
 - `get_status()` — 今日是否交易日
 - `get_overview()` — 市场整体概览（指数 + 板块 + 涨跌榜）
 - `get_indices()` — 主要指数实时数据（沪深、创业板、纳斯达克等）
+- `get_benchmark_history(code?)` — 指数/ETF 历史走势，默认沪深300（sh000300），用于基准对比
+- `calculate_trading_dates(date, time_mode?, confirm_days?)` — 推算 T+N 净值日/确认到账日
+- `get_next_trading_day(date)` — 获取指定日期起的下一个交易日（跳过周末和节假日）
 
 ### 记录管理（需 PRO 会员 + Agent Token）
 - `get_current_user()` — 当前账号信息
 - `get_summary()` — 持仓总览摘要（总市值/今日收益/累计收益/收益率），含 `dataUpdatedAt`
 - `get_records()` — 完整持仓明细（holdings 持仓 + watchlist 观察列），含实时收益计算和 `dataUpdatedAt`
-- `request_transaction(item_code, item_name, record_type, amount, date?, note?)` — 向 App 发送买入/卖出请求信号
+- `request_transaction(item_code, item_name, record_type, amount, date?, note?, group_name?)` — 向 App 发送买入/卖出请求信号
 
 ## 5. Edge cases
 

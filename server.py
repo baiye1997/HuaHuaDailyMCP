@@ -486,6 +486,76 @@ async def get_indices() -> list:
     return data if isinstance(data, list) else []
 
 
+@mcp.tool()
+async def get_benchmark_history(code: str = "sh000300") -> list:
+    """
+    获取指数或 ETF 的历史走势数据，用于与持仓基金进行基准对比。
+    默认返回沪深300（sh000300）的历史数据。
+
+    支持两类代码：
+    - 指数代码：如 "sh000300"（沪深300）、"sh000001"（上证指数）、"sz399001"（深证成指）
+    - ETF 代码（纯数字）：如 "510300"（沪深300ETF）
+
+    适合回答"我的基金跑赢大盘了吗"、"与沪深300比较"等问题。
+
+    Args:
+        code: 指数或 ETF 代码，默认 "sh000300"（沪深300）
+    """
+    _require_token()
+    data = await _get(f"/api/market/benchmark-history/{code}")
+    return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def calculate_trading_dates(
+    date: str,
+    time_mode: str = "PRE_MARKET",
+    confirm_days: int = 1,
+) -> dict:
+    """
+    计算基金申赎的净值日、数据日、确认到账日（T+N 日期推算）。
+    跳过周末和法定节假日，适合辅助用户规划买卖时机。
+
+    Args:
+        date: 操作日期，格式 "YYYY-MM-DD"
+        time_mode: 操作时间段。
+            "PRE_MARKET"（默认）= 当日收盘前买入，T 日起算；
+            "POST_MARKET" = 收盘后买入，T+1 日起算
+        confirm_days: 确认天数（即 T+N 的 N），常见值：
+            1 = T+1（货币基金、部分债基）
+            2 = T+2（多数股票型/混合型基金）
+            3 = T+3（部分 QDII、特殊基金）
+
+    Returns:
+        dict 包含：
+            nav_date: 净值日（基金以哪天净值计算）
+            data_date: 数据日（净值数据公布日）
+            confirm_date: 确认到账日（份额/资金到账日）
+    """
+    _require_token()
+    return await _post("/api/market/calculate-dates", {
+        "date": date,
+        "time_mode": time_mode,
+        "confirm_days": confirm_days,
+    })
+
+
+@mcp.tool()
+async def get_next_trading_day(date: str) -> dict:
+    """
+    获取指定日期起（含当日）的下一个交易日，自动跳过周末和法定节假日。
+    适合回答"元旦后第一个交易日是哪天"、"这个日期能买基金吗"等问题。
+
+    Args:
+        date: 起始日期，格式 "YYYY-MM-DD"
+
+    Returns:
+        dict 包含 date 字段，值为下一个交易日日期（"YYYY-MM-DD"）
+    """
+    _require_token()
+    return await _get("/api/market/next-trading-day", params={"date": date})
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tools: 记录管理（需 Agent Token + 会员）
 # ═══════════════════════════════════════════════════════════════════════════════

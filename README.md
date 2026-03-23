@@ -111,6 +111,9 @@ MCP 的持仓数据来自**云端同步备份**，不是实时本地数据。
 - 查询市场整体行情时，调用 get_overview 或 get_indices
 - 搜索基金时，调用 search_item
 - 如果我想买入或卖出，调用 request_transaction 发送信号让我在 App 中确认
+- 如果我想对比大盘/沪深300，调用 get_benchmark_history
+- 如果我问今天/某日下单几天后到账，调用 calculate_trading_dates
+- 如果我问某日是否交易日或节假日后首个交易日，调用 get_next_trading_day
 - 数据来自云同步，若我提到"刚刚刷新"，请提醒我先在 App 触发同步
 - 不要反复调用相同工具，一次查询结果可复用回答多个问题
 ```
@@ -121,7 +124,7 @@ MCP 的持仓数据来自**云端同步备份**，不是实时本地数据。
 
 | 文件 | 用途 |
 |------|------|
-| `server.py` | MCP 服务实现（FastMCP，17 个工具） |
+| `server.py` | MCP 服务实现（FastMCP，20 个工具） |
 | `pyproject.toml` | 打包配置，定义 `huahua-daily` 命令入口（uvx 部署必需） |
 | `SKILL.md` | AI 指令文件（OpenClaw skill 描述） |
 | `requirements.txt` | Python 依赖（mcp、httpx） |
