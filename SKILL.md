@@ -1,7 +1,7 @@
 ---
 name: huahua-daily
 description: 花花日记助手 - 查询用户的基金持仓、今日收益、累计收益、市场行情等数据，并可向 App 发送交易请求信号
-version: 1.1.0
+version: 1.0.0
 author: baiye1997
 permissions: 网络访问权限（用于查询花花日记后端 API）
 metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BAIYE_AGENT_TOKEN","emoji":"🌸","os":["darwin","linux","win32"]}}
