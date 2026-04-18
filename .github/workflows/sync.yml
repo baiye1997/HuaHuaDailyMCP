@@ -13,7 +13,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout HuaHuaDailyMCP
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
