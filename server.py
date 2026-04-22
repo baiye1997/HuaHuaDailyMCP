@@ -300,6 +300,22 @@ async def _fetch_estimates(codes: list) -> dict:
     return result
 
 
+def _extract_night_watch_codes(portfolio: dict) -> list[str]:
+    """从云同步 JSON 中提取夜盘关注列表。"""
+    raw = portfolio.get("nightWatchCodes")
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in raw:
+        code = str(item or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        result.append(code)
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tools: 认证类
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -373,6 +389,76 @@ async def get_item_estimate(codes: list[str]) -> dict:
         codes = codes[:50]
     estimate_map = await _fetch_estimates(codes)
     return {"data": list(estimate_map.values())}
+
+
+@mcp.tool()
+async def get_night_watchlist() -> dict:
+    """
+    获取用户夜盘关注列表（来自最近一次云同步）。
+    若用户在 App 里调整过夜盘关注基金，请先在 App 执行云备份/同步后再调用。
+    """
+    _require_token()
+    portfolio = await _download_portfolio()
+    codes = _extract_night_watch_codes(portfolio)
+    funds: list = portfolio.get("funds", [])
+    by_code = {str(f.get("code", "")).strip(): f for f in funds if str(f.get("code", "")).strip()}
+
+    items = []
+    for code in codes:
+        fund = by_code.get(code, {})
+        items.append({
+            "code": code,
+            "name": fund.get("name", ""),
+            "type": fund.get("type", ""),
+            "groupId": fund.get("groupId", ""),
+            "isWatchlist": bool(fund.get("isWatchlist", False)),
+        })
+
+    return {
+        "codes": codes,
+        "items": items,
+        "count": len(codes),
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+@mcp.tool()
+async def get_night_est(codes: Optional[list[str]] = None) -> dict:
+    """
+    获取夜盘估算结果。
+
+    - 传入 codes 时：直接查询这些基金
+    - 不传 codes 时：自动读取用户最近一次云同步中的夜盘关注列表
+
+    注意：本工具直接调用花花日记后端 `/api/fund/night-est`，
+    因此与 App 夜盘页共用同一套后端缓存与夜盘估算逻辑。
+    """
+    _require_token()
+
+    target_codes: list[str] = []
+    if codes:
+        seen: set[str] = set()
+        for item in codes:
+            code = str(item or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            target_codes.append(code)
+    else:
+        portfolio = await _download_portfolio()
+        target_codes = _extract_night_watch_codes(portfolio)
+
+    if not target_codes:
+        return {
+            "status": "empty",
+            "items": [],
+            "message": "云同步中暂无夜盘关注列表，请先在 App 夜盘页添加基金并执行云备份。",
+        }
+
+    if len(target_codes) > 50:
+        target_codes = target_codes[:50]
+
+    return await _get("/api/fund/night-est", params={"codes": ",".join(target_codes)})
 
 
 @mcp.tool()

@@ -108,6 +108,8 @@ MCP 的持仓数据来自**云端同步备份**，不是实时本地数据。
 - 查询我的总资产/今日收益/累计收益时，调用 get_summary
 - 查询我的完整持仓明细时，调用 get_records
 - 查询某只基金的实时估算/涨跌时，调用 get_item_estimate
+- 查询我的夜盘关注列表时，调用 get_night_watchlist
+- 查询夜盘估算时，调用 get_night_est；若不传代码则默认读取云同步中的夜盘关注列表
 - 查询市场整体行情时，调用 get_overview 或 get_indices
 - 搜索基金时，调用 search_item
 - 如果我想买入或卖出，调用 request_transaction 发送信号让我在 App 中确认

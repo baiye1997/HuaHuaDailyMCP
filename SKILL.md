@@ -22,6 +22,7 @@ metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BA
 - 用户说："今天大盘怎么样？"、"沪深300涨跌如何？"
 - 用户说："帮我搜一下华夏基金"、"查一下这只基金的费率"
 - 用户说："帮我看看这只基金近一年排名"、"今天走势怎么样？"
+- 用户说："帮我看看夜盘基金"、"夜盘现在怎么样"、"我夜盘列表里哪些在涨"
 - 用户说："我想买 1000 元易方达消费"、"帮我发一个卖出请求"
 - 用户说："我的基金跑赢大盘了吗？"、"帮我对比一下沪深300"
 - 用户说："今天下午买入，什么时候确认份额？"、"T+2 是哪天？"
@@ -38,20 +39,25 @@ metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BA
    - 用户只给名称：先调用 `search_item` 找到 code，再调 `get_item_estimate`；
    - 用户需要深度分析（历史、胜率、排名等）：调用 `get_item_detail`（较慢，仅需深度信息时使用）；
 
-4. **查询市场整体**：调用 `get_overview` 或 `get_indices`；
+4. **查询夜盘**：
+   - 用户明确问夜盘估算：优先调用 `get_night_est`；
+   - 若用户未提供代码，则直接调用 `get_night_est()`，默认读取云同步中的夜盘关注列表；
+   - 若需要先告诉用户当前夜盘列表有哪些基金，可先调用 `get_night_watchlist`；
 
-5. **基准对比**：
+5. **查询市场整体**：调用 `get_overview` 或 `get_indices`；
+
+6. **基准对比**：
    - 调用 `get_benchmark_history("sh000300")` 获取沪深300历史走势；
    - 结合 `get_item_history(code)` 的持仓基金历史，对比两者涨跌幅；
    - 常用指数代码：`sh000300`（沪深300）、`sh000001`（上证）、`sz399001`（深证成指）；
 
-6. **买卖日期规划**：
+7. **买卖日期规划**：
    - 调用 `get_next_trading_day(date)` 确认某日是否为交易日及下一交易日；
    - 调用 `calculate_trading_dates(date, time_mode, confirm_days)` 推算净值日/确认日；
      - `time_mode`：`"PRE_MARKET"`（收盘前买入）或 `"POST_MARKET"`（收盘后买入）；
      - `confirm_days`：T+1（货币/债基），T+2（股票/混合），T+3（QDII）；
 
-7. **发送交易信号**：
+8. **发送交易信号**：
    - 若 code 来自搜索结果，须先向用户确认：「是【基金名 code:XXXXXX】吗？确认后我来发送请求。」
    - 用户确认后再调用 `request_transaction`；
    - 调用完成后明确告知：「信号已发送，请打开 App 确认后才会生效，AI 不会直接执行交易。」
@@ -68,6 +74,8 @@ metadata: {"openclaw":{"requires":{"env":["BAIYE_AGENT_TOKEN"]},"primaryEnv":"BA
 ### 数据查询
 - `search_item(query)` — 按编号/名称搜索，返回最多 20 条（仅 code 未知时使用）
 - `get_item_estimate(codes)` — 批量获取今日实时估算净值（最多 50 个）；日常查行情首选，轻量快速
+- `get_night_watchlist()` — 获取夜盘关注列表（来自最近一次云同步）
+- `get_night_est(codes?)` — 获取夜盘估算；不传代码时默认读取云同步中的夜盘关注列表
 - `get_item_detail(code)` — 基金深度信息（历史收益率、胜率分析、净值序列、费率）；仅需深度分析时使用
 - `get_item_history(code)` — 历史净值走势
 - `get_item_dividends(code)` — 历史派息记录
