@@ -1,23 +1,24 @@
 """
 HuahuaDaily MCP Server (OpenClaw Skills)
 =========================================
-让 OpenClaw 等 AI agent 通过 MCP 协议直接访问花花日记的数据与功能。
+让 Codex、Claude Code、Claude Desktop、Cursor、Windsurf、OpenClaw 等
+AI agent 通过 MCP 协议直接访问花花日记的数据与功能。
 
 配置方式：
-  在 mcporter.json 的 mcpServers 中添加：
+  在 Agent 的 MCP 配置中添加：
   {
     "huahua-daily": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP#subdirectory=mcp-server", "huahua-daily"],
       "env": {
-        "BAIYE_AGENT_TOKEN": "从 App 设置页生成并复制的 Agent 令牌"
+        "HUAHUA_AGENT_TOKEN": "从 App 设置页生成并复制的 Agent 令牌"
       }
     }
   }
 
 认证说明：
   所有工具均需 Agent Token（PRO 会员专属功能）。
-  通过环境变量 BAIYE_AGENT_TOKEN 配置（推荐），或运行时调用 set_token 工具。
+  通过环境变量 HUAHUA_AGENT_TOKEN 配置（推荐），或运行时调用 set_token 工具。
   Agent Token 需在 App 设置页 → "Agent 访问令牌" 中生成（需邮箱验证，仅 PRO 会员可用）。
 """
 
@@ -26,6 +27,9 @@ import json
 import math
 import asyncio
 import time
+import base64
+import mimetypes
+import threading
 from decimal import Decimal
 from typing import Optional
 
@@ -36,7 +40,7 @@ from mcp.server.fastmcp import FastMCP
 _OFFICIAL_API = "https://huahua.preview.aliyun-zeabur.cn"
 
 _session: dict = {
-    "token": os.environ.get("BAIYE_AGENT_TOKEN", "").strip(),
+    "token": os.environ.get("HUAHUA_AGENT_TOKEN", "").strip(),
     "base_url": _OFFICIAL_API,
 }
 
@@ -44,14 +48,17 @@ mcp = FastMCP("huahua-daily")
 
 # ── 连接池（模块级，整个 MCP session 复用同一个 client，避免每次请求重建 TCP 连接）─────
 _http_client: Optional[httpx.AsyncClient] = None
+_http_client_lock = threading.Lock()
 
 def _get_client() -> httpx.AsyncClient:
     global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=30,
-            limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
-        )
+    with _http_client_lock:
+        is_closed = bool(getattr(_http_client, "is_closed", False)) if _http_client is not None else True
+        if _http_client is None or is_closed:
+            _http_client = httpx.AsyncClient(
+                timeout=30,
+                limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
+            )
     return _http_client
 
 # ── Portfolio 内存缓存（TTL=30s，避免 get_summary 重复下载）─────────────────────
@@ -68,17 +75,16 @@ def _require_token() -> None:
     """所有工具（除 set_token）均须调用此函数，确保 Agent Token 已配置。"""
     if not _session["token"]:
         raise ValueError(
-            "未配置 Agent Token。请在 mcporter.json 的 env 中设置 BAIYE_AGENT_TOKEN，"
-            "或调用 set_token 工具。Agent Token 需在 App 设置页 →「Agent 访问令牌」中生成（PRO 会员专属）。"
+            "未配置 Agent Token。请在 MCP server env 中设置 HUAHUA_AGENT_TOKEN"
+            "，或调用 set_token 工具。"
+            "Agent Token 需在 App 设置页 →「Agent 访问令牌」中生成（PRO 会员专属）。"
         )
 
 def _headers() -> dict:
-    """构建 HTTP 请求头：优先使用 AgentToken，否则回退到 Bearer JWT。"""
+    """构建 Agent Token HTTP 请求头。"""
     tok = _session["token"]
     if not tok:
         return {}
-    if tok.startswith("ey"):
-        return {"Authorization": f"Bearer {tok}"}
     return {"Authorization": f"AgentToken {tok}"}
 
 def _url(path: str) -> str:
@@ -116,6 +122,43 @@ async def _post(path: str, body: dict = None) -> dict:
     except httpx.HTTPStatusError as e:
         raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
 
+
+async def _post_files(path: str, files: list[tuple[str, bytes, str]]) -> dict | list:
+    try:
+        multipart = [
+            ("files", (filename, content, mime))
+            for filename, content, mime in files
+        ]
+        r = await _get_client().post(_url(path), files=multipart, headers=_headers())
+        if r.status_code == 401:
+            raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
+        if r.status_code == 403:
+            raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
+        r.raise_for_status()
+        return r.json()
+    except ValueError:
+        raise
+    except httpx.TimeoutException:
+        raise RuntimeError("请求超时，请稍后重试。")
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
+
+async def _put(path: str, body: dict = None) -> dict:
+    try:
+        r = await _get_client().put(_url(path), json=body or {}, headers=_headers())
+        if r.status_code == 401:
+            raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
+        if r.status_code == 403:
+            raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
+        r.raise_for_status()
+        return r.json()
+    except ValueError:
+        raise
+    except httpx.TimeoutException:
+        raise RuntimeError("请求超时，请稍后重试。")
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
+
 async def _delete(path: str) -> dict:
     try:
         r = await _get_client().delete(_url(path), headers=_headers())
@@ -131,6 +174,86 @@ async def _delete(path: str) -> dict:
         raise RuntimeError("请求超时，请稍后重试。")
     except httpx.HTTPStatusError as e:
         raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
+
+
+def _unwrap_sync_payload(raw: dict) -> dict:
+    json_data = raw.get("json_data") or "{}"
+    updated_at = raw.get("updated_at", "")
+    etag = raw.get("etag", "")
+    try:
+        parsed = json.loads(json_data)
+        if isinstance(parsed, str):
+            parsed = json.loads(parsed)
+        if isinstance(parsed, dict) and isinstance(parsed.get("data"), dict):
+            parsed = parsed["data"]
+        if not isinstance(parsed, dict):
+            parsed = {}
+    except Exception:
+        parsed = {}
+    parsed["_meta_updated_at"] = updated_at
+    parsed["_meta_etag"] = etag
+    parsed["_meta_size_bytes"] = len(json_data.encode("utf-8"))
+    return parsed
+
+
+def _normalize_upload_files(
+    image_paths: Optional[list[str]] = None,
+    images_base64: Optional[list[dict]] = None,
+) -> list[tuple[str, bytes, str]]:
+    files: list[tuple[str, bytes, str]] = []
+    for path in image_paths or []:
+        clean_path = os.path.expanduser(str(path))
+        if not os.path.isfile(clean_path):
+            raise ValueError(f"图片文件不存在：{path}")
+        with open(clean_path, "rb") as f:
+            content = f.read()
+        mime = mimetypes.guess_type(clean_path)[0] or "application/octet-stream"
+        files.append((os.path.basename(clean_path), content, mime))
+    for idx, item in enumerate(images_base64 or []):
+        if not isinstance(item, dict):
+            raise ValueError("images_base64 每项必须是对象")
+        filename = str(item.get("filename") or f"image_{idx + 1}.png")
+        mime = str(item.get("mime") or mimetypes.guess_type(filename)[0] or "image/png")
+        raw_b64 = str(item.get("base64") or "")
+        if "," in raw_b64 and raw_b64.strip().lower().startswith("data:"):
+            raw_b64 = raw_b64.split(",", 1)[1]
+        try:
+            content = base64.b64decode(raw_b64, validate=True)
+        except Exception:
+            raise ValueError(f"{filename} 的 base64 内容无效")
+        files.append((filename, content, mime))
+    if not files:
+        raise ValueError("请提供 image_paths 或 images_base64")
+    if len(files) > 10:
+        raise ValueError("单次最多上传 10 张截图")
+    return files
+
+
+def _summarize_import_items(items: list[dict]) -> dict:
+    total = len(items)
+    exact = fuzzy = ambiguous = unmatched = skipped = 0
+    for item in items:
+        if item.get("skip"):
+            skipped += 1
+        status = item.get("match_status") or item.get("match_quality")
+        matched = item.get("matched")
+        code = item.get("code") or item.get("fund_code")
+        if status == "exact" or (matched is True and status not in {"fuzzy", "ambiguous"}):
+            exact += 1
+        elif status in {"fuzzy", "manual"}:
+            fuzzy += 1
+        elif status == "ambiguous":
+            ambiguous += 1
+        elif matched is False or code in {None, "", "000000"}:
+            unmatched += 1
+    return {
+        "total": total,
+        "exact": exact,
+        "fuzzy": fuzzy,
+        "ambiguous": ambiguous,
+        "unmatched": unmatched,
+        "skipped": skipped,
+    }
 
 
 # ── 精度工具（严格对齐前端 _round，消除 IEEE 754 差异）───────────────────────────
@@ -307,13 +430,73 @@ async def _fetch_estimates(codes: list) -> dict:
 async def set_token(token: str) -> str:
     """
     手动设置 Agent Token（运行时配置）。
-    推荐通过环境变量 BAIYE_AGENT_TOKEN 配置，无需调用此工具。
+    推荐通过环境变量 HUAHUA_AGENT_TOKEN 配置，无需调用此工具。
 
     Args:
         token: 从 App 设置页「Agent 访问令牌」中生成的令牌（PRO 会员专属）
     """
     _session["token"] = token.strip()
     return f"✅ Token 已设置，将连接官方后端：{_session['base_url']}"
+
+
+@mcp.tool()
+async def get_tool_manifest() -> dict:
+    """
+    返回本 MCP 服务的能力边界、认证方式和建议调用顺序。
+    不访问后端，可用于 Agent 在会话开始时自检。
+    """
+    return {
+        "name": "huahua-daily",
+        "transport": "stdio",
+        "auth": {
+            "primary_env": "HUAHUA_AGENT_TOKEN",
+            "header": "Authorization: AgentToken <token>",
+        },
+        "api_base": _OFFICIAL_API,
+        "capabilities": {
+            "profile": ["get_current_user"],
+            "portfolio": [
+                "get_sync_meta",
+                "get_raw_sync_data",
+                "get_records",
+                "get_summary",
+                "get_transactions",
+                "get_groups",
+                "get_tags",
+            ],
+            "market": [
+                "search_item",
+                "get_item_estimate",
+                "get_item_detail",
+                "get_item_history",
+                "get_item_dividends",
+                "get_fund_timeline",
+                "get_fund_fees",
+                "get_fund_period_rank",
+                "get_batch_fund_period_ranks",
+                "get_night_estimate",
+                "get_daily_rank",
+                "get_status",
+                "get_overview",
+                "get_indices",
+                "get_benchmark_history",
+                "calculate_trading_dates",
+                "get_next_trading_day",
+            ],
+            "community": ["get_danmaku", "send_danmaku", "get_notices"],
+            "trade": ["request_transaction", "get_agent_requests", "update_agent_request"],
+            "imports": [
+                "import_holding_screenshots",
+                "import_transaction_screenshots",
+                "request_import_review",
+            ],
+        },
+        "safety": {
+            "direct_trading": False,
+            "trade_flow": "request_transaction 只创建待确认信号，必须由用户在 App 内确认。",
+            "destructive_tools": [],
+        },
+    }
 
 
 @mcp.tool()
@@ -451,6 +634,20 @@ async def get_fund_period_rank(code: str) -> dict:
     return await _get(f"/api/fund/period-rank/{code}")
 
 
+@mcp.tool()
+async def get_batch_fund_period_ranks(codes: list[str]) -> dict:
+    """
+    批量获取多个项目的近期业绩排名，返回 code → 排名数据的映射。
+    一次请求处理最多 50 个项目，适合同时查看多个项目的表现对比。
+
+    Args:
+        codes: 项目编号列表，如 ["000001", "161725"]，最多 50 个
+    """
+    _require_token()
+    payload = await _post("/api/fund/period-rank/batch", {"codes": codes})
+    return payload.get("data", {}) if isinstance(payload, dict) else {}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tools: 概览数据（需 Agent Token）
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -483,6 +680,21 @@ async def get_indices() -> list:
     _require_token()
     data = await _get("/api/market/indices")
     return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def get_night_estimate(codes: list[str]) -> dict:
+    """
+    获取QDII基金的夜间实时估值（美股/港股盘后/盘前交易时段）。
+    返回每只基金的盘后涨跌幅、持仓穿透明细、汇率变动等数据。
+    仅在美股交易时段（北京时间夜间）数据有效，需要会员权限。
+
+    Args:
+        codes: 基金代码列表，如 ["016665", "018147"]，逗号拼接为查询参数
+    """
+    _require_token()
+    code_str = ",".join(codes) if isinstance(codes, list) else str(codes)
+    return await _get("/api/market/night-est", params={"codes": code_str})
 
 
 @mcp.tool()
@@ -576,25 +788,120 @@ async def _download_portfolio() -> dict:
             return _portfolio_cache["data"]
 
         raw = await _get("/api/sync/download")
-        if not isinstance(raw, dict):
-            raw = {}
-        json_data = raw.get("json_data") or "{}"
-        updated_at = raw.get("updated_at", "")
-        try:
-            parsed = json.loads(json_data)
-            if not isinstance(parsed, dict):
-                parsed = {}
-        except Exception:
-            parsed = {}
-
-        parsed["_meta_updated_at"] = updated_at
+        parsed = _unwrap_sync_payload(raw if isinstance(raw, dict) else {})
         _portfolio_cache["data"] = parsed
         _portfolio_cache["ts"] = now
         return parsed
 
 
 @mcp.tool()
-async def get_records() -> dict:
+async def get_sync_meta() -> dict:
+    """
+    获取云端同步快照元信息，不下载完整数据。
+    返回 updated_at、etag、size_bytes，用于判断 App 数据是否已经同步到云端。
+    """
+    _require_token()
+    return await _get("/api/sync/meta")
+
+
+@mcp.tool()
+async def get_raw_sync_data(include_json_text: bool = False) -> dict:
+    """
+    获取完整云同步快照。默认返回解析后的 JSON，不返回原始 JSON 字符串以节省上下文。
+
+    云同步快照包含 funds、groups、watchlistGroups、globalTags、字段显示配置等。
+    profit ledger 是 App 可由交易记录和历史净值重建的派生数据；当前云同步快照通常不包含 ledger。
+
+    Args:
+        include_json_text: 是否同时返回服务端原始 json_data 字符串；只有做备份/迁移时才建议开启。
+    """
+    _require_token()
+    raw = await _get("/api/sync/download")
+    parsed = _unwrap_sync_payload(raw if isinstance(raw, dict) else {})
+    result = {
+        "data": {k: v for k, v in parsed.items() if not k.startswith("_meta_")},
+        "meta": {
+            "updated_at": parsed.get("_meta_updated_at", ""),
+            "etag": parsed.get("_meta_etag", ""),
+            "size_bytes": parsed.get("_meta_size_bytes", 0),
+            "contains_ledger": "ledger" in parsed,
+        },
+    }
+    if include_json_text:
+        result["json_data"] = raw.get("json_data", "") if isinstance(raw, dict) else ""
+    return result
+
+
+@mcp.tool()
+async def get_transactions(code: str = "", include_pending: bool = True) -> dict:
+    """
+    获取云同步快照中的交易流水。默认返回全部基金；传入 code 时只返回该基金。
+
+    Args:
+        code: 可选，6 位基金代码。
+        include_pending: 是否包含待确认交易。
+    """
+    _require_token()
+    portfolio = await _download_portfolio()
+    funds = portfolio.get("funds", [])
+    items = []
+    for fund in funds:
+        if code and str(fund.get("code", "")) != str(code):
+            continue
+        txs = fund.get("transactions") or []
+        if not include_pending:
+            txs = [tx for tx in txs if tx.get("status") == "CONFIRMED"]
+        items.append({
+            "code": fund.get("code", ""),
+            "name": fund.get("name", ""),
+            "groupId": fund.get("groupId", ""),
+            "transactions": txs,
+        })
+    return {
+        "items": items,
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+@mcp.tool()
+async def get_groups() -> dict:
+    """
+    获取持仓分组和自选分组。
+    """
+    _require_token()
+    portfolio = await _download_portfolio()
+    return {
+        "groups": portfolio.get("groups", []),
+        "watchlistGroups": portfolio.get("watchlistGroups", []),
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+@mcp.tool()
+async def get_tags() -> dict:
+    """
+    获取全局标签注册表，以及每只基金绑定的标签。
+    """
+    _require_token()
+    portfolio = await _download_portfolio()
+    funds = portfolio.get("funds", [])
+    return {
+        "globalTags": portfolio.get("globalTags", []),
+        "fundTags": [
+            {
+                "code": fund.get("code", ""),
+                "name": fund.get("name", ""),
+                "tags": fund.get("tags", []),
+                "visibleTags": fund.get("visibleTags", []),
+            }
+            for fund in funds
+        ],
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+@mcp.tool()
+async def get_records(include_transactions: bool = False) -> dict:
     """
     获取用户持仓记录，并自动计算今日收益、累计收益、市值、收益率等字段。
     需要 Agent Token 且账号需开通会员才能使用云同步功能。
@@ -612,6 +919,10 @@ async def get_records() -> dict:
       - totalReturnRate: 累计收益率（cumulativeProfit / totalCost × 100%，含落袋，综合回报率）
       注意：totalReturnRate ≠ totalHoldingReturnRate，前者含已实现收益，后者仅持仓浮动
     - dataUpdatedAt: 云同步数据的最后更新时间（UTC），展示给用户让其知晓数据新鲜度
+
+    Args:
+        include_transactions: 是否在每条记录中附带原始 transactions。默认 false 以节省上下文。
+            需要审计交易流水、重算收益或排查数据时设为 true。
     """
     _require_token()
     # 1. 下载记录（有缓存时直接复用）
@@ -635,6 +946,7 @@ async def get_records() -> dict:
         code = fund.get("code", "")
         est = estimate_map.get(code, {})
         stats = _calc_fund_stats(fund, est)
+        txs = fund.get("transactions") or []
 
         # 只保留对 AI 有用的字段，剥离原始交易记录（可能数百条）
         enriched = {
@@ -645,6 +957,8 @@ async def get_records() -> dict:
             "tags": fund.get("tags", []),
             **stats,
         }
+        if include_transactions:
+            enriched["transactions"] = txs
 
         # 估算时间（来自后端 gztime 字段）
         if est:
@@ -652,7 +966,6 @@ async def get_records() -> dict:
             enriched["estimateSource"] = est.get("source", "")
 
         # 在途资产（PENDING 买入交易）
-        txs = fund.get("transactions") or []
         pending_buy_txs = [
             {"date": tx.get("date"), "amount": tx.get("amount"), "note": tx.get("note")}
             for tx in txs if tx.get("status") == "PENDING" and tx.get("type") == "BUY"
@@ -673,6 +986,7 @@ async def get_records() -> dict:
                 "lastNav": fund.get("lastNav"),
                 "estimatedNav": stats.get("estimatedNav"),
                 "estimatedChangePercent": stats.get("estimatedChangePercent"),
+                **({"transactions": txs} if include_transactions else {}),
             })
 
     # 5. 汇总统计（只统计持仓项目）
@@ -784,6 +1098,200 @@ async def request_transaction(
     action = "买入" if tx_type == "BUY" else "卖出"
     group_hint = f"（分组：{group_name}）" if group_name else ""
     return f"✅ {action}请求已发送：{item_name}（{item_code}）¥{amount:,.2f}{group_hint}，请打开 App 确认后生效。"
+
+
+@mcp.tool()
+async def get_agent_requests() -> list:
+    """
+    获取当前账号仍待处理的 Agent 交易请求。
+    主要用于 Agent 自检是否已经重复发送请求；App 端仍是最终确认入口。
+    """
+    _require_token()
+    data = await _get("/api/agent/request")
+    return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def update_agent_request(request_id: str, status: str) -> dict:
+    """
+    更新 Agent 交易请求状态。通常由 App 调用；Agent 只应在用户明确要求撤销/忽略时使用。
+
+    Args:
+        request_id: get_agent_requests 返回的 id。
+        status: "DISMISSED" 或 "PROCESSED"。Agent 常用 "DISMISSED"。
+    """
+    _require_token()
+    normalized = (status or "").strip().upper()
+    if normalized not in ("PROCESSED", "DISMISSED"):
+        raise ValueError("status 必须是 PROCESSED 或 DISMISSED")
+    return await _put(f"/api/agent/request/{request_id}", {"status": normalized})
+
+
+@mcp.tool()
+async def import_holding_screenshots(
+    image_paths: Optional[list[str]] = None,
+    images_base64: Optional[list[dict]] = None,
+) -> dict:
+    """
+    识别持仓/自选截图，只返回结构化结果，不写入 App。
+
+    Agent 可先对 unmatched / ambiguous 条目做轻确认，然后调用 request_import_review
+    把结果发送到 App 现有导入确认页。
+
+    Args:
+        image_paths: 本地图片路径列表，适合 Codex、Claude Code 等本地 CLI/桌面 Agent。
+        images_base64: 图片对象列表，格式 {filename, mime, base64}。
+    """
+    _require_token()
+    files = _normalize_upload_files(image_paths, images_base64)
+    raw = await _post_files("/api/import_screenshot", files)
+    items = raw if isinstance(raw, list) else []
+    normalized = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        code = item.get("code") or "000000"
+        match_quality = item.get("match_quality") or ("exact" if code != "000000" else "none")
+        normalized.append({
+            **item,
+            "match_status": "unmatched" if code == "000000" else match_quality,
+            "resolution_required": code == "000000" or match_quality in {"none", "ambiguous"},
+            "resolution_reason": "未匹配到基金代码" if code == "000000" else "",
+        })
+    return {
+        "items": normalized,
+        "summary": _summarize_import_items(normalized),
+        "next_step": "如有未匹配或歧义项，先在对话中轻确认；确认后调用 request_import_review 发送到 App。",
+    }
+
+
+@mcp.tool()
+async def import_transaction_screenshots(
+    image_paths: Optional[list[str]] = None,
+    images_base64: Optional[list[dict]] = None,
+) -> dict:
+    """
+    识别交易记录截图，只返回结构化结果，不写入 App。
+
+    Args:
+        image_paths: 本地图片路径列表，适合 Codex、Claude Code 等本地 CLI/桌面 Agent。
+        images_base64: 图片对象列表，格式 {filename, mime, base64}。
+    """
+    _require_token()
+    files = _normalize_upload_files(image_paths, images_base64)
+    raw = await _post_files("/api/import_transactions", files)
+    items = raw if isinstance(raw, list) else []
+    normalized = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        matched = bool(item.get("matched"))
+        reason = ""
+        if not matched:
+            reason = "未匹配到基金代码"
+        elif not item.get("date"):
+            reason = "交易日期缺失"
+        elif item.get("type") == "BUY" and item.get("amount") is None:
+            reason = "买入金额缺失"
+        elif item.get("type") == "SELL" and item.get("shares") is None:
+            reason = "卖出份额缺失"
+        normalized.append({
+            **item,
+            "match_status": "exact" if matched else "unmatched",
+            "resolution_required": bool(reason),
+            "resolution_reason": reason,
+        })
+    return {
+        "items": normalized,
+        "summary": _summarize_import_items(normalized),
+        "next_step": "如有未匹配或日期/金额歧义，先在对话中轻确认；确认后调用 request_import_review 发送到 App。",
+    }
+
+
+@mcp.tool()
+async def request_import_review(
+    import_type: str,
+    items: list[dict],
+    source_note: str = "Agent screenshot import",
+) -> str:
+    """
+    将 Agent 识别和轻确认后的导入结果发送到 App，复用 App 现有批量导入确认页。
+
+    Args:
+        import_type: "HOLDINGS"、"WATCHLIST" 或 "TRANSACTIONS"。
+        items: 识别结果数组，最多 300 条。
+        source_note: 展示给用户的来源说明。
+    """
+    _require_token()
+    normalized_type = (import_type or "").strip().upper()
+    action_map = {
+        "HOLDINGS": "IMPORT_HOLDINGS",
+        "WATCHLIST": "IMPORT_WATCHLIST",
+        "TRANSACTIONS": "IMPORT_TRANSACTIONS",
+    }
+    action_type = action_map.get(normalized_type)
+    if not action_type:
+        raise ValueError("import_type 必须是 HOLDINGS、WATCHLIST 或 TRANSACTIONS")
+    if not isinstance(items, list) or not items:
+        raise ValueError("items 不能为空")
+    if len(items) > 300:
+        raise ValueError("单次导入请求最多 300 条")
+    payload_dict = {
+        "importType": normalized_type,
+        "source": "agent_screenshot",
+        "sourceNote": source_note,
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "summary": _summarize_import_items(items),
+        "items": items,
+    }
+    payload = json.dumps(payload_dict, ensure_ascii=False)
+    if len(payload.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("导入请求体不能超过 1MB，请拆分后发送")
+    await _post("/api/agent/request", {"action_type": action_type, "payload": payload})
+    return f"✅ 已发送 {payload_dict['summary']['total']} 条导入结果到 App，请打开花花日记批量确认后导入。"
+
+
+@mcp.tool()
+async def get_danmaku(code: str) -> list:
+    """
+    获取某只基金今日弹幕/社区短消息。
+
+    Args:
+        code: 6 位基金代码。
+    """
+    _require_token()
+    data = await _get(f"/api/danmaku/{code}")
+    return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def send_danmaku(fund_code: str, text: str, color: str = "#ffffff") -> dict:
+    """
+    发送某只基金的社区短消息。只有用户明确要求发言时才调用。
+
+    Args:
+        fund_code: 6 位基金代码。
+        text: 1-30 字。
+        color: 十六进制颜色，默认白色。
+    """
+    _require_token()
+    return await _post("/api/danmaku/send", {
+        "fund_code": fund_code,
+        "text": text,
+        "color": color,
+    })
+
+
+@mcp.tool()
+async def get_notices(since: float = 0) -> list:
+    """
+    获取系统公告。
+
+    Args:
+        since: Unix 秒时间戳，只返回该时间之后的公告；默认返回最近公告。
+    """
+    data = await _get("/api/notices", params={"since": since})
+    return data if isinstance(data, list) else []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
