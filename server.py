@@ -707,6 +707,37 @@ async def get_night_estimate(codes: list[str]) -> dict:
 
 
 @mcp.tool()
+async def get_night_watchlist() -> dict:
+    """
+    获取用户在 App「夜盘估值」页面手动添加的基金代码列表。
+
+    数据来自最近一次云同步快照的 nightWatchCodes 字段；典型用法是把
+    返回的 codes 作为参数传给 get_night_estimate，实现 "拉取用户自选
+    夜盘基金的最新估值" 的端到端调用，无需用户在对话中手动报代码。
+
+    Returns:
+        dict 包含：
+        - codes: 用户添加的 6 位基金代码列表（list[str]）
+        - count: 代码数量
+        - has_customized: 用户是否自定义过（False 表示用户从未修改，
+          App 端会回退到内置默认列表；此时返回的 codes 为空，Agent
+          可以提示用户先去 App 添加夜盘自选）
+        - dataUpdatedAt: 云同步快照时间
+    """
+    _require_token()
+    portfolio = await _download_portfolio()
+    raw = portfolio.get("nightWatchCodes")
+    has_customized = isinstance(raw, list)
+    codes = [str(c) for c in raw if c] if has_customized else []
+    return {
+        "codes": codes,
+        "count": len(codes),
+        "has_customized": has_customized,
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+@mcp.tool()
 async def get_benchmark_history(code: str = "sh000300") -> list:
     """
     获取指数或 ETF 的历史走势数据，用于与持仓基金进行基准对比。

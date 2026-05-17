@@ -177,7 +177,7 @@ get_fund_timeline({"code": "110022"})
 - 近 1/3/6 月、1 年排名：`get_fund_period_rank`（单只）或 `get_batch_fund_period_ranks`（批量，最多 50 只）。
 - 今日盘中估值曲线：`get_fund_timeline`。
 - 综合详情、胜率表、持仓等深度信息：`get_item_detail`。此工具较重，不要作为日常行情首选。
-- QDII 夜盘实时估值：`get_night_estimate`（需会员，美股交易时段有效）。
+- QDII 夜盘实时估值：`get_night_estimate`（需会员，美股交易时段有效）；用户在 App 添加的夜盘自选基金列表用 `get_night_watchlist`，通常先调这个再传给 `get_night_estimate`。
 
 ### 4.4 用户问市场整体
 
@@ -223,7 +223,16 @@ get_benchmark_history({"code": "sh000300"})
 
 ### 4.6 用户问 QDII 基金夜盘
 
-QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段。夜盘估值在美股交易时段（21:30–次日04:00 夏令时）提供实时持仓穿透：
+QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段。夜盘估值在美股交易时段（21:30–次日04:00 夏令时）提供实时持仓穿透。
+
+**推荐流程（无需用户报代码）**：先用 `get_night_watchlist()` 读用户在 App 添加的夜盘自选列表，再用其结果调 `get_night_estimate()`：
+
+```json
+get_night_watchlist()
+// 返回 {"codes": ["016665", "018147", ...], "count": N, "has_customized": true, "dataUpdatedAt": "..."}
+```
+
+若 `has_customized=false`（用户未自定义过），codes 为空，应提示用户先去 App 夜盘页面添加自选基金，或允许用户手动指定一组代码。
 
 ```json
 get_night_estimate({"codes": ["016665", "018147"]})
@@ -239,6 +248,7 @@ get_night_estimate({"codes": ["016665", "018147"]})
 - 需要 VIP 或 PRO 会员。
 - 非美股交易时段返回休市状态，不是错误。
 - 不要在 A 股交易时段频繁调用。
+- 夜盘自选列表需要 App 至少做过一次云同步才能被 MCP 读到；旧版本 App（未升级到含夜盘同步的版本）的备份里没有 nightWatchCodes 字段，此时 `has_customized` 会是 `false`。
 
 ### 4.7 用户问交易日/T+N
 

@@ -92,6 +92,7 @@ clawhub install huahua-daily
 - `get_fund_period_rank(code)`
 - `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只。
 - `get_night_estimate(codes)`：QDII 基金夜间实时估值，含持仓穿透、汇率变动（需会员）。
+- `get_night_watchlist()`：读取用户在 App 夜盘估值页手动添加的基金代码列表（来自云同步快照），通常作为 `get_night_estimate` 的前置工具，免去用户手动报代码。
 - `get_daily_rank()`
 - `get_status()`
 - `get_overview()`
