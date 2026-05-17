@@ -108,7 +108,7 @@ clawhub install huahua-daily
 
 截图导入：
 
-- `import_holding_screenshots(image_paths?, images_base64?)`：识别持仓/自选截图，返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。
+- `import_holding_screenshots(image_paths?, images_base64?, import_type="HOLDINGS")`：识别持仓/自选截图，返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 可选 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率）。
 - `import_transaction_screenshots(image_paths?, images_base64?)`：识别交易流水截图，返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
 - `request_import_review(import_type, items, source_note?)`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`。
 

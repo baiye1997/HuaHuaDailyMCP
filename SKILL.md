@@ -317,11 +317,21 @@ update_agent_request({
 
 ### 6.1 持仓/自选截图识别
 
-本地路径：
+持仓截图（本地路径）：
 
 ```json
 import_holding_screenshots({
-  "image_paths": ["/absolute/path/holding.png"]
+  "image_paths": ["/absolute/path/holding.png"],
+  "import_type": "HOLDINGS"
+})
+```
+
+自选截图（务必传 `import_type: "WATCHLIST"`）：
+
+```json
+import_holding_screenshots({
+  "image_paths": ["/absolute/path/watchlist.png"],
+  "import_type": "WATCHLIST"
 })
 ```
 
@@ -331,9 +341,14 @@ Base64：
 import_holding_screenshots({
   "images_base64": [
     {"filename": "holding.png", "mime": "image/png", "base64": "..."}
-  ]
+  ],
+  "import_type": "HOLDINGS"
 })
 ```
+
+`import_type` 说明：
+- `HOLDINGS`（默认）：持仓页面通常不显示基金代码，后端按名称四步匹配（可能出现模糊匹配）。
+- `WATCHLIST`：自选页面明确显示 6 位代码，后端用专门 prompt 提取代码并精确匹配；AI 漏识别代码时回退名称匹配。**自选场景务必传此值**，否则会强制走名称模糊匹配。
 
 返回重点：
 - `items`：识别条目。
@@ -343,8 +358,8 @@ import_holding_screenshots({
 - `resolution_reason`：轻确认原因。
 
 用途：
-- 持仓截图导入。
-- 自选截图导入。
+- 持仓截图导入（`import_type="HOLDINGS"`）。
+- 自选截图导入（`import_type="WATCHLIST"`）。
 
 识别后不要直接声称导入完成。
 

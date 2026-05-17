@@ -123,13 +123,22 @@ async def _post(path: str, body: dict = None) -> dict:
         raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
 
 
-async def _post_files(path: str, files: list[tuple[str, bytes, str]]) -> dict | list:
+async def _post_files(
+    path: str,
+    files: list[tuple[str, bytes, str]],
+    form_data: Optional[dict] = None,
+) -> dict | list:
     try:
         multipart = [
             ("files", (filename, content, mime))
             for filename, content, mime in files
         ]
-        r = await _get_client().post(_url(path), files=multipart, headers=_headers())
+        r = await _get_client().post(
+            _url(path),
+            files=multipart,
+            data=form_data or None,
+            headers=_headers(),
+        )
         if r.status_code == 401:
             raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
         if r.status_code == 403:
@@ -1131,6 +1140,7 @@ async def update_agent_request(request_id: str, status: str) -> dict:
 async def import_holding_screenshots(
     image_paths: Optional[list[str]] = None,
     images_base64: Optional[list[dict]] = None,
+    import_type: str = "HOLDINGS",
 ) -> dict:
     """
     识别持仓/自选截图，只返回结构化结果，不写入 App。
@@ -1141,10 +1151,14 @@ async def import_holding_screenshots(
     Args:
         image_paths: 本地图片路径列表，适合 Codex、Claude Code 等本地 CLI/桌面 Agent。
         images_base64: 图片对象列表，格式 {filename, mime, base64}。
+        import_type: "HOLDINGS"（持仓，默认）或 "WATCHLIST"（自选）。
+            自选截图通常显示 6 位基金代码，传 "WATCHLIST" 后端会用专门 prompt
+            提取代码并精确匹配，避免名称模糊匹配的误配。
     """
     _require_token()
     files = _normalize_upload_files(image_paths, images_base64)
-    raw = await _post_files("/api/import_screenshot", files)
+    mode = "watchlist" if (import_type or "").strip().upper() == "WATCHLIST" else "holdings"
+    raw = await _post_files("/api/import_screenshot", files, form_data={"mode": mode})
     items = raw if isinstance(raw, list) else []
     normalized = []
     for item in items:
