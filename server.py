@@ -57,7 +57,7 @@ def _get_client() -> httpx.AsyncClient:
         if _http_client is None or is_closed:
             _http_client = httpx.AsyncClient(
                 timeout=30,
-                limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
+                limits=httpx.Limits(max_connections=5, max_keepalive_connections=0),
             )
     return _http_client
 
@@ -133,12 +133,14 @@ async def _post_files(
             ("files", (filename, content, mime))
             for filename, content, mime in files
         ]
-        r = await _get_client().post(
-            _url(path),
-            files=multipart,
-            data=form_data or None,
-            headers=_headers(),
-        )
+        upload_client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=30))
+        async with upload_client:
+            r = await upload_client.post(
+                _url(path),
+                files=multipart,
+                data=form_data or None,
+                headers=_headers(),
+            )
         if r.status_code == 401:
             raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
         if r.status_code == 403:
