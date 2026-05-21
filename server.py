@@ -9,7 +9,7 @@ AI agent 通过 MCP 协议直接访问花花日记的数据与功能。
   {
     "huahua-daily": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP#subdirectory=mcp-server", "huahua-daily"],
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
       "env": {
         "HUAHUA_AGENT_TOKEN": "从 App 设置页生成并复制的 Agent 令牌"
       }

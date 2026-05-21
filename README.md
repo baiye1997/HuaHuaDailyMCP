@@ -23,7 +23,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/baiye1997/HuaHuaDailyMCP#subdirectory=mcp-server",
+        "git+https://github.com/baiye1997/HuaHuaDailyMCP",
         "huahua-daily"
       ],
       "env": {
