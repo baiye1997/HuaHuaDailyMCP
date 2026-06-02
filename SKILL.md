@@ -1,7 +1,7 @@
 ---
 name: huahua-daily
 description: Use HuahuaDaily MCP to query portfolio, transactions, market data, screenshot imports, and send App-confirmed trade/import requests.
-version: 1.5.1
+version: 2.0.1
 ---
 
 # 花花日记助手（HuahuaDaily）
