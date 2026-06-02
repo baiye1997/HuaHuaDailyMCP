@@ -29,6 +29,7 @@ import asyncio
 import time
 import base64
 import mimetypes
+import re
 import threading
 from decimal import Decimal
 from typing import Optional
@@ -57,7 +58,11 @@ def _get_client() -> httpx.AsyncClient:
         if _http_client is None or is_closed:
             _http_client = httpx.AsyncClient(
                 timeout=30,
-                limits=httpx.Limits(max_connections=5, max_keepalive_connections=0),
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30,
+                ),
             )
     return _http_client
 
@@ -69,6 +74,66 @@ _download_lock: asyncio.Lock = asyncio.Lock()  # 防止并发调用时重复下�
 # ── Estimates 内存缓存（TTL=60s，避免同 session 内多工具调用重复拉取相同基金估算）──────
 _estimate_cache: dict = {}  # {code: {"data": {...}, "ts": float}}
 _ESTIMATE_TTL = 60  # seconds
+# ── Validation helpers ────────────────────────────────────────────────────────
+
+# 图片文件大小限制（10MB）
+_MAX_IMAGE_SIZE = 10 * 1024 * 1024
+
+# 允许的图片 MIME 类型
+_ALLOWED_IMAGE_MIMES = {
+    "image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp",
+}
+
+def _validate_image_file(filepath: str, content: bytes, mime: str) -> None:
+    """验证图片文件大小和格式。"""
+    if len(content) > _MAX_IMAGE_SIZE:
+        raise ValueError(f"图片文件过大：{len(content) / 1024 / 1024:.1f}MB，最大允许 10MB")
+    if mime and mime not in _ALLOWED_IMAGE_MIMES:
+        # 尝试从文件头检测真实格式
+        if content[:8] == b'\x89PNG\r\n\x1a\n':
+            pass  # PNG
+        elif content[:2] == b'\xff\xd8':
+            pass  # JPEG
+        elif content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+            pass  # WebP
+        elif content[:6] in (b'GIF87a', b'GIF89a'):
+            pass  # GIF
+        elif content[:2] == b'BM':
+            pass  # BMP
+        else:
+            raise ValueError(f"不支持的图片格式：{mime}，仅支持 JPEG/PNG/WebP/GIF/BMP")
+
+def _validate_fund_code(code: str) -> str:
+    """验证并规范化基金代码（6位数字）。"""
+    normalized = str(code or "").strip()
+    if not re.fullmatch(r'\d{6}', normalized):
+        raise ValueError(f"基金代码必须是 6 位数字，收到：{code}")
+    return normalized
+
+def _validate_amount(amount: float) -> float:
+    """验证交易金额。"""
+    if not isinstance(amount, (int, float)):
+        raise ValueError(f"金额必须是数字，收到：{amount}")
+    if amount <= 0:
+        raise ValueError(f"金额必须大于 0，收到：{amount}")
+    if amount > 100_000_000:  # 1亿
+        raise ValueError(f"金额过大：{amount}，请确认是否正确")
+    # 使用 _r2 对齐前端精度（四舍五入），而非 Python round()（四舍五入到偶数）
+    return _r2(amount)
+
+def _validate_date(date_str: str) -> str:
+    """验证日期格式（YYYY-MM-DD）。"""
+    if not date_str:
+        return ""
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_str):
+        raise ValueError(f"日期格式必须是 YYYY-MM-DD，收到：{date_str}")
+    try:
+        from datetime import datetime
+        datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        raise ValueError(f"无效的日期：{date_str}")
+    return date_str
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _require_token() -> None:
@@ -219,6 +284,7 @@ def _normalize_upload_files(
         with open(clean_path, "rb") as f:
             content = f.read()
         mime = mimetypes.guess_type(clean_path)[0] or "application/octet-stream"
+        _validate_image_file(clean_path, content, mime)
         files.append((os.path.basename(clean_path), content, mime))
     for idx, item in enumerate(images_base64 or []):
         if not isinstance(item, dict):
@@ -232,6 +298,7 @@ def _normalize_upload_files(
             content = base64.b64decode(raw_b64, validate=True)
         except Exception:
             raise ValueError(f"{filename} 的 base64 内容无效")
+        _validate_image_file(filename, content, mime)
         files.append((filename, content, mime))
     if not files:
         raise ValueError("请提供 image_paths 或 images_base64")
@@ -381,6 +448,9 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
 
 # ── Estimates 带缓存拉取（60s TTL，多工具共享，避免重复网络请求）──────────────────────
 
+# 并发控制：限制同时请求后端的批次数量，避免触发速率限制
+_estimate_semaphore = asyncio.Semaphore(3)
+
 async def _fetch_estimates(codes: list) -> dict:
     """
     批量获取今日估算数据，60s 内存缓存。
@@ -409,9 +479,15 @@ async def _fetch_estimates(codes: list) -> dict:
 
     # 并行批量请求未命中的（每批 50 个）
     # return_exceptions=True 保证 gather 本身不会抛出，各批次异常通过 isinstance 判断处理
+    # 使用信号量限制并发，避免同时发起过多请求
     batches = [miss_codes[i:i+50] for i in range(0, len(miss_codes), 50)]
+
+    async def _fetch_batch(batch: list) -> dict:
+        async with _estimate_semaphore:
+            return await _post("/api/estimate/batch", {"codes": batch})
+
     responses = await asyncio.gather(
-        *[_post("/api/estimate/batch", {"codes": batch}) for batch in batches],
+        *[_fetch_batch(batch) for batch in batches],
         return_exceptions=True,
     )
     for resp in responses:
@@ -534,7 +610,12 @@ async def search_item(query: str) -> list:
         query: 搜索关键词，如 "000001"、"华夏"
     """
     _require_token()
-    data = await _get("/api/search", params={"key": query})
+    normalized = str(query or "").strip()
+    if not normalized:
+        raise ValueError("搜索关键词不能为空")
+    if len(normalized) > 100:
+        raise ValueError("搜索关键词过长，最多 100 字符")
+    data = await _get("/api/search", params={"key": normalized})
     return data if isinstance(data, list) else []
 
 
@@ -548,7 +629,8 @@ async def get_item_detail(code: str) -> dict:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    return await _get(f"/api/fund/{code}")
+    validated_code = _validate_fund_code(code)
+    return await _get(f"/api/fund/{validated_code}")
 
 
 @mcp.tool()
@@ -562,9 +644,20 @@ async def get_item_estimate(codes: list[str]) -> dict:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
     """
     _require_token()
-    if len(codes) > 50:
-        codes = codes[:50]
-    estimate_map = await _fetch_estimates(codes)
+    # 验证并去重基金代码
+    validated_codes = []
+    seen = set()
+    for code in codes[:50]:
+        try:
+            normalized = _validate_fund_code(code)
+            if normalized not in seen:
+                validated_codes.append(normalized)
+                seen.add(normalized)
+        except ValueError:
+            continue  # 跳过无效代码
+    if not validated_codes:
+        return {"data": []}
+    estimate_map = await _fetch_estimates(validated_codes)
     return {"data": list(estimate_map.values())}
 
 
@@ -587,7 +680,8 @@ async def get_item_history(code: str) -> list:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    data = await _get(f"/api/history/{code}")
+    validated_code = _validate_fund_code(code)
+    data = await _get(f"/api/history/{validated_code}")
     return data if isinstance(data, list) else []
 
 
@@ -600,7 +694,8 @@ async def get_item_dividends(code: str) -> list:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    data = await _get(f"/api/fund/dividends/{code}")
+    validated_code = _validate_fund_code(code)
+    data = await _get(f"/api/fund/dividends/{validated_code}")
     return data if isinstance(data, list) else []
 
 
@@ -615,7 +710,8 @@ async def get_fund_timeline(code: str) -> list:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    data = await _get(f"/api/fund/today-timeline/{code}")
+    validated_code = _validate_fund_code(code)
+    data = await _get(f"/api/fund/today-timeline/{validated_code}")
     return data if isinstance(data, list) else []
 
 
@@ -629,7 +725,8 @@ async def get_fund_fees(code: str) -> dict:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    return await _get(f"/api/fund/fees/{code}")
+    validated_code = _validate_fund_code(code)
+    return await _get(f"/api/fund/fees/{validated_code}")
 
 
 @mcp.tool()
@@ -642,7 +739,8 @@ async def get_fund_period_rank(code: str) -> dict:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    return await _get(f"/api/fund/period-rank/{code}")
+    validated_code = _validate_fund_code(code)
+    return await _get(f"/api/fund/period-rank/{validated_code}")
 
 
 @mcp.tool()
@@ -655,7 +753,20 @@ async def get_batch_fund_period_ranks(codes: list[str]) -> dict:
         codes: 项目编号列表，如 ["000001", "161725"]，最多 50 个
     """
     _require_token()
-    payload = await _post("/api/fund/period-rank/batch", {"codes": codes})
+    # 验证并去重基金代码
+    validated_codes = []
+    seen = set()
+    for code in codes[:50]:
+        try:
+            normalized = _validate_fund_code(code)
+            if normalized not in seen:
+                validated_codes.append(normalized)
+                seen.add(normalized)
+        except ValueError:
+            continue
+    if not validated_codes:
+        return {"data": {}}
+    payload = await _post("/api/fund/period-rank/batch", {"codes": validated_codes})
     return payload.get("data", {}) if isinstance(payload, dict) else {}
 
 
@@ -704,7 +815,20 @@ async def get_night_estimate(codes: list[str]) -> dict:
         codes: 基金代码列表，如 ["016665", "018147"]，逗号拼接为查询参数
     """
     _require_token()
-    code_str = ",".join(codes) if isinstance(codes, list) else str(codes)
+    # 验证并去重基金代码
+    validated_codes = []
+    seen = set()
+    for code in codes[:50]:
+        try:
+            normalized = _validate_fund_code(code)
+            if normalized not in seen:
+                validated_codes.append(normalized)
+                seen.add(normalized)
+        except ValueError:
+            continue
+    if not validated_codes:
+        return {"status": "empty", "items": []}
+    code_str = ",".join(validated_codes)
     return await _get("/api/market/night-est", params={"codes": code_str})
 
 
@@ -755,7 +879,11 @@ async def get_benchmark_history(code: str = "sh000300") -> list:
         code: 指数或 ETF 代码，默认 "sh000300"（沪深300）
     """
     _require_token()
-    data = await _get(f"/api/market/benchmark-history/{code}")
+    normalized = str(code or "").strip().lower()
+    # 验证格式：指数代码（sh/sz开头+6位数字）或 ETF 代码（6位数字）
+    if not re.fullmatch(r'(sh|sz)\d{6}|\d{6}', normalized):
+        raise ValueError(f"基准代码格式无效：{code}，应为 sh000300 或 510300 格式")
+    data = await _get(f"/api/market/benchmark-history/{normalized}")
     return data if isinstance(data, list) else []
 
 
@@ -786,8 +914,13 @@ async def calculate_trading_dates(
             confirm_date: 确认到账日（份额/资金到账日）
     """
     _require_token()
+    validated_date = _validate_date(date)
+    if time_mode not in ("PRE_MARKET", "POST_MARKET"):
+        raise ValueError(f"time_mode 必须是 PRE_MARKET 或 POST_MARKET，收到：{time_mode}")
+    if not (1 <= confirm_days <= 30):
+        raise ValueError(f"confirm_days 必须在 1-30 之间，收到：{confirm_days}")
     return await _post("/api/market/calculate-dates", {
-        "date": date,
+        "date": validated_date,
         "time_mode": time_mode,
         "confirm_days": confirm_days,
     })
@@ -806,7 +939,8 @@ async def get_next_trading_day(date: str) -> dict:
         dict 包含 date 字段，值为下一个交易日日期（"YYYY-MM-DD"）
     """
     _require_token()
-    return await _get("/api/market/next-trading-day", params={"date": date})
+    validated_date = _validate_date(date)
+    return await _get("/api/market/next-trading-day", params={"date": validated_date})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -884,11 +1018,15 @@ async def get_transactions(code: str = "", include_pending: bool = True) -> dict
         include_pending: 是否包含待确认交易。
     """
     _require_token()
+    # 验证基金代码（如果提供）
+    validated_code = ""
+    if code:
+        validated_code = _validate_fund_code(code)
     portfolio = await _download_portfolio()
     funds = portfolio.get("funds", [])
     items = []
     for fund in funds:
-        if code and str(fund.get("code", "")) != str(code):
+        if validated_code and str(fund.get("code", "")) != validated_code:
             continue
         txs = fund.get("transactions") or []
         if not include_pending:
@@ -1124,11 +1262,16 @@ async def request_transaction(
     if tx_type not in ("BUY", "SELL"):
         return "❌ record_type 必须是 'BUY' 或 'SELL'"
 
+    # 输入验证
+    validated_code = _validate_fund_code(item_code)
+    validated_amount = _validate_amount(amount)
+    validated_date = _validate_date(date)
+
     payload_dict: dict = {
-        "code": item_code,
+        "code": validated_code,
         "name": item_name,
-        "amount": round(amount, 2),  # 保留两位小数，避免浮点序列化漂移
-        "date": date,
+        "amount": validated_amount,
+        "date": validated_date,
         "note": note,
     }
     if group_name:
@@ -1139,7 +1282,7 @@ async def request_transaction(
     await _post("/api/agent/request", {"action_type": tx_type, "payload": payload})
     action = "买入" if tx_type == "BUY" else "卖出"
     group_hint = f"（分组：{group_name}）" if group_name else ""
-    return f"✅ {action}请求已发送：{item_name}（{item_code}）¥{amount:,.2f}{group_hint}，请打开 App 确认后生效。"
+    return f"✅ {action}请求已发送：{item_name}（{validated_code}）¥{validated_amount:,.2f}{group_hint}，请打开 App 确认后生效。"
 
 
 @mcp.tool()
@@ -1307,25 +1450,33 @@ async def get_danmaku(code: str) -> list:
         code: 6 位基金代码。
     """
     _require_token()
-    data = await _get(f"/api/danmaku/{code}")
+    validated_code = _validate_fund_code(code)
+    data = await _get(f"/api/danmaku/{validated_code}")
     return data if isinstance(data, list) else []
 
 
 @mcp.tool()
-async def send_danmaku(fund_code: str, text: str, color: str = "#ffffff") -> dict:
+async def send_danmaku(fund_code: str, text: str) -> dict:
     """
     发送某只基金的社区短消息。只有用户明确要求发言时才调用。
+    弹幕颜色由 App 根据基金涨跌情况自动设置，无需手动指定。
 
     Args:
         fund_code: 6 位基金代码。
         text: 1-30 字。
-        color: 十六进制颜色，默认白色。
     """
     _require_token()
+    validated_code = _validate_fund_code(fund_code)
+    normalized_text = str(text or "").strip()
+    if not normalized_text:
+        raise ValueError("弹幕内容不能为空")
+    if len(normalized_text) > 30:
+        raise ValueError(f"弹幕内容过长：{len(normalized_text)} 字，最多 30 字")
+    # 颜色由后端/App自动设置，使用默认值
     return await _post("/api/danmaku/send", {
-        "fund_code": fund_code,
-        "text": text,
-        "color": color,
+        "fund_code": validated_code,
+        "text": normalized_text,
+        "color": "#ffffff",  # 默认白色，App会根据涨跌覆盖
     })
 
 

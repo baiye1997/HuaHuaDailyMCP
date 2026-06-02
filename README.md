@@ -6,15 +6,30 @@
 
 ## 前置条件
 
+- **Python 3.10+**
 - 花花日记账号已开通 PRO。
 - 在 App「小窝 / 设置 → Agent 访问令牌」生成新的 Agent Token。
 - Token 只显示一次，配置为环境变量 `HUAHUA_AGENT_TOKEN`。
 
 官方 API 固定地址：`https://huahua.preview.aliyun-zeabur.cn`
 
-## 通用 MCP stdio 配置
+## 安装方式
 
-适用于 Codex、Codex CLI、Claude Code、Claude Code CLI、Claude Desktop、Cursor、Windsurf、Hermes Agent 等支持 stdio MCP server 的 Agent。
+### 方式一：uvx（推荐）
+
+[uv](https://docs.astral.sh/uv/) 是快速的 Python 包管理器，`uvx` 可直接运行 Python 工具，无需手动安装依赖。
+
+**安装 uv**（如果尚未安装）：
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**MCP 配置**：
 
 ```json
 {
@@ -33,6 +48,109 @@
   }
 }
 ```
+
+### 方式二：pip 安装
+
+如果不想安装 uv，可以用 pip 全局安装：
+
+```bash
+pip install git+https://github.com/baiye1997/HuaHuaDailyMCP
+```
+
+**MCP 配置**：
+
+```json
+{
+  "mcpServers": {
+    "huahua-daily": {
+      "command": "huahua-daily",
+      "env": {
+        "HUAHUA_AGENT_TOKEN": "粘贴你的 Agent Token"
+      }
+    }
+  }
+}
+```
+
+### 方式三：本地运行
+
+```bash
+# 克隆仓库
+git clone https://github.com/baiye1997/HuaHuaDailyMCP.git
+cd HuaHuaDailyMCP
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行
+HUAHUA_AGENT_TOKEN=你的Token python server.py
+```
+
+## 各 Agent 配置示例
+
+### Claude Code
+
+```bash
+claude mcp add huahua-daily \
+  -e HUAHUA_AGENT_TOKEN=你的Token \
+  -- uvx --from git+https://github.com/baiye1997/HuaHuaDailyMCP huahua-daily
+```
+
+或手动编辑 `~/.claude.json`：
+
+```json
+{
+  "mcpServers": {
+    "huahua-daily": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
+      "env": {
+        "HUAHUA_AGENT_TOKEN": "你的Token"
+      }
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）或 `%APPDATA%\Claude\claude_desktop_config.json`（Windows）：
+
+```json
+{
+  "mcpServers": {
+    "huahua-daily": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
+      "env": {
+        "HUAHUA_AGENT_TOKEN": "你的Token"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+编辑 `~/.cursor/mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "huahua-daily": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
+      "env": {
+        "HUAHUA_AGENT_TOKEN": "你的Token"
+      }
+    }
+  }
+}
+```
+
+### Windsurf
+
+编辑 `~/.windsurf/mcp.json`，格式同上。
 
 ## OpenClaw / ClawHub
 
@@ -116,7 +234,7 @@ clawhub install huahua-daily
 社区与公告：
 
 - `get_danmaku(code)`
-- `send_danmaku(fund_code, text, color="#ffffff")`
+- `send_danmaku(fund_code, text)`：发送弹幕，颜色由 App 根据涨跌自动设置
 - `get_notices(since=0)`
 
 ## 截图导入流程

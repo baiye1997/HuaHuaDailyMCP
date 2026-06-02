@@ -1,7 +1,6 @@
 ---
 name: huahua-daily
 description: Use HuahuaDaily MCP to query portfolio, transactions, market data, screenshot imports, and send App-confirmed trade/import requests.
-version: 2.0.1
 ---
 
 # 花花日记助手（HuahuaDaily）
@@ -473,14 +472,14 @@ get_danmaku({"code": "110022"})
 ```json
 send_danmaku({
   "fund_code": "110022",
-  "text": "今天波动有点大",
-  "color": "#ffffff"
+  "text": "今天波动有点大"
 })
 ```
 
 规则：
 - 只有用户明确要求发言时才调用 `send_danmaku`。
 - `text` 最多 30 字。
+- 弹幕颜色由 App 根据基金涨跌情况自动设置，无需手动指定。
 
 系统公告：
 
