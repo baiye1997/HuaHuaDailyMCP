@@ -178,6 +178,8 @@ get_fund_timeline({"code": "110022"})
 - 今日盘中估值曲线：`get_fund_timeline`。
 - 综合详情、胜率表、持仓等深度信息：`get_item_detail`。此工具较重，不要作为日常行情首选。
 - QDII 夜盘实时估值：`get_night_estimate`（需会员，美股交易时段有效）；用户在 App 添加的夜盘自选基金列表用 `get_night_watchlist`，通常先调这个再传给 `get_night_estimate`。
+- 基金画像（综合信息）：`get_fund_profile`。包含费率、排名、持仓、行业、分红、风险指标等。
+- 批量画像：`get_batch_fund_profiles`（最多 20 只）。
 
 ### 4.4 用户问市场整体
 
@@ -205,7 +207,43 @@ get_daily_rank()
 get_status()
 ```
 
-### 4.5 用户问“跑赢大盘/对比沪深300”
+### 4.5 用户问"大家都在买什么/热门基金"
+
+持有人排行：
+
+```json
+get_holder_ranking()
+```
+
+返回 App 内持有人数最多的 30 只基金，含持有人数和涨跌幅。
+
+### 4.6 用户问指数/ETF 行情
+
+目录：
+
+```json
+get_instrument_catalog()
+```
+
+实时行情：
+
+```json
+get_instrument_quotes({"codes": ["sh000300", "sh000001"]})
+```
+
+分时走势：
+
+```json
+get_instrument_timeline({"code": "sh000300"})
+```
+
+历史数据：
+
+```json
+get_instrument_history({"code": "sh000300", "period": "1m"})
+```
+
+### 4.7 用户问"跑赢大盘/对比沪深300"
 
 默认沪深300：
 
@@ -221,7 +259,7 @@ get_benchmark_history({"code": "sh000300"})
 
 需要基金自身走势时，再调用 `get_item_history(code)`。
 
-### 4.6 用户问 QDII 基金夜盘
+### 4.8 用户问 QDII 基金夜盘
 
 QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段。夜盘估值在美股交易时段（21:30–次日04:00 夏令时）提供实时持仓穿透。
 
@@ -238,6 +276,8 @@ get_night_watchlist()
 get_night_estimate({"codes": ["016665", "018147"]})
 ```
 
+`force: true` 可跳过服务端缓存强制刷新，默认 false。
+
 返回每只基金的：
 - `estimatedChangePercent`：盘后复合涨跌幅（股价×汇率）。
 - `estimatedNav`：估算净值。
@@ -250,7 +290,7 @@ get_night_estimate({"codes": ["016665", "018147"]})
 - 不要在 A 股交易时段频繁调用。
 - 夜盘自选列表需要 App 至少做过一次云同步才能被 MCP 读到；旧版本 App（未升级到含夜盘同步的版本）的备份里没有 nightWatchCodes 字段，此时 `has_customized` 会是 `false`。
 
-### 4.7 用户问交易日/T+N
+### 4.9 用户问交易日/T+N
 
 下一个交易日：
 
@@ -489,6 +529,56 @@ get_notices({"since": 0})
 
 `since` 是 Unix 秒时间戳；默认 0 表示拉取最近公告。
 
+### 7.1 喵舍社区
+
+排行榜：
+
+```json
+get_community_ranking({"tab": "weekly"})
+```
+
+`tab` 可选 `weekly`（周收益）、`monthly`（月收益）、`total`（总收益）。
+
+我的排名：
+
+```json
+get_community_my_rank()
+```
+
+用户详情（十大重仓前5）：
+
+```json
+get_community_user({"uid": "12345678"})
+```
+
+搜索用户（UID / 昵称）：
+
+```json
+search_community_users({"query": "花花"})
+```
+
+关注/粉丝数：
+
+```json
+get_community_stats()
+```
+
+关注列表：
+
+```json
+get_community_following()
+```
+
+社区通知（排名变化、被关注等）：
+
+```json
+get_community_notices({"since": 0})
+```
+
+规则：
+- 社区功能需要 PRO 会员。
+- `get_community_notices` 与 `get_notices` 不同：前者是个人社区通知，后者是系统公告。
+
 ## 8. 常见降级
 
 - `401`：Token 无效或过期，要求用户重新生成。
@@ -497,3 +587,4 @@ get_notices({"since": 0})
 - 行情估算为空：可能是非交易日、盘前或数据源暂不可用，不要当作错误。
 - 截图识别为空：提示用户换清晰截图，或分批上传。
 - 导入请求发送成功后：不要继续追问大表格细节，等待用户在 App 确认。
+- 持有人排行需要 PRO 会员，非会员返回 403。

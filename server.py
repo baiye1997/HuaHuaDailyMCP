@@ -38,7 +38,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 # ── Session state ─────────────────────────────────────────────────────────────
-_OFFICIAL_API = "https://huahua.preview.aliyun-zeabur.cn"
+_OFFICIAL_API = os.environ.get("HUAHUA_API_BASE", "https://api.huahuadaily.cn").strip().rstrip("/")
 
 _session: dict = {
     "token": os.environ.get("HUAHUA_AGENT_TOKEN", "").strip(),
@@ -69,7 +69,13 @@ def _get_client() -> httpx.AsyncClient:
 # ── Portfolio 内存缓存（TTL=30s，避免 get_summary 重复下载）─────────────────────
 _portfolio_cache: dict = {"data": None, "ts": 0.0}
 _PORTFOLIO_TTL = 30  # seconds
-_download_lock: asyncio.Lock = asyncio.Lock()  # 防止并发调用时重复下载（双检锁模式）
+_download_lock: Optional[asyncio.Lock] = None
+
+def _get_download_lock() -> asyncio.Lock:
+    global _download_lock
+    if _download_lock is None:
+        _download_lock = asyncio.Lock()
+    return _download_lock
 
 # ── Estimates 内存缓存（TTL=60s，避免同 session 内多工具调用重复拉取相同基金估算）──────
 _estimate_cache: dict = {}  # {code: {"data": {...}, "ts": float}}
@@ -235,22 +241,6 @@ async def _put(path: str, body: dict = None) -> dict:
     except httpx.HTTPStatusError as e:
         raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
 
-async def _delete(path: str) -> dict:
-    try:
-        r = await _get_client().delete(_url(path), headers=_headers())
-        if r.status_code == 401:
-            raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
-        if r.status_code == 403:
-            raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
-        r.raise_for_status()
-        return r.json()
-    except ValueError:
-        raise
-    except httpx.TimeoutException:
-        raise RuntimeError("请求超时，请稍后重试。")
-    except httpx.HTTPStatusError as e:
-        raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
-
 
 def _unwrap_sync_payload(raw: dict) -> dict:
     json_data = raw.get("json_data") or "{}"
@@ -313,6 +303,7 @@ def _summarize_import_items(items: list[dict]) -> dict:
     for item in items:
         if item.get("skip"):
             skipped += 1
+            continue
         status = item.get("match_status") or item.get("match_quality")
         matched = item.get("matched")
         code = item.get("code") or item.get("fund_code")
@@ -348,6 +339,8 @@ def _summarize_import_items(items: list[dict]) -> dict:
 
 def _js_round(v: float, d: int) -> float:
     """精确对齐前端 _round(v, d)。"""
+    if not math.isfinite(v):
+        return 0.0
     try:
         shifted = float(Decimal(repr(v)) * Decimal(10 ** d))
         return math.floor(shifted + 0.5) / (10 ** d)
@@ -376,6 +369,68 @@ def _r2_pct(holding_profit: float, cost_total: float) -> float:
 
 
 # ── 收益计算（严格对齐前端 calculateFundStats 逻辑）──────────────────────────────
+
+_TYPE_ORDER = {"CORRECTION": 0, "SELL": 1, "BUY": 2, "DIVIDEND_CASH": 3, "DIVIDEND_REINVEST": 3}
+
+
+def _tx_effective_date(tx: dict) -> str:
+    return tx.get("confirmDate") or tx.get("date") or ""
+
+
+def _sort_txs(txs: list[dict]) -> list[dict]:
+    """对齐前端 sortTransactionsByEffectiveOrder：按日期 → DIVIDEND_CASH 置后 → dayOrder → typeOrder → 原序。"""
+    indexed = list(enumerate(txs))
+    indexed.sort(key=lambda pair: (
+        _tx_effective_date(pair[1]),
+        1 if pair[1].get("type") == "DIVIDEND_CASH" else 0,
+        pair[1].get("dayOrder") if pair[1].get("dayOrder") is not None else 999999,
+        _TYPE_ORDER.get(pair[1].get("type", ""), 9),
+        pair[0],
+    ))
+    return [item for _, item in indexed]
+
+
+def _calc_correction_delta_total(txs: list[dict]) -> float:
+    """对齐前端 getCorrectionDeltas：重放交易序列，计算每笔 CORRECTION 的成本变化量之和。"""
+    current_shares = 0.0
+    current_cost_total = 0.0
+    delta_total = 0.0
+    for tx in _sort_txs([t for t in txs if t.get("status") == "CONFIRMED"]):
+        tx_type = tx.get("type", "")
+        if tx_type == "BUY":
+            buy_shares = tx.get("shares") or 0
+            buy_amount = tx.get("amount") or 0
+            if buy_shares <= 0 and (tx.get("nav") or 0) > 0 and buy_amount > 0:
+                buy_shares = buy_amount / tx["nav"]
+            if buy_amount <= 0 and buy_shares > 0 and (tx.get("nav") or 0) > 0:
+                buy_amount = _r2(buy_shares * tx["nav"])
+            current_shares = _r6(current_shares + buy_shares)
+            current_cost_total = _r2(current_cost_total + buy_amount)
+        elif tx_type == "SELL":
+            sell_shares = tx.get("shares") or 0
+            if sell_shares <= 0 and (tx.get("nav") or 0) > 0 and (tx.get("amount") or 0) > 0:
+                sell_shares = tx["amount"] / tx["nav"]
+            sold_cost = _r2(current_cost_total * min(sell_shares, current_shares) / current_shares) if current_shares > 0 else 0
+            current_shares = _r6(current_shares - sell_shares)
+            current_cost_total = _r2(current_cost_total - sold_cost)
+            if current_shares <= 0.001:
+                current_shares = 0.0
+                current_cost_total = 0.0
+        elif tx_type == "DIVIDEND_REINVEST":
+            reinvest_shares = tx.get("shares") or 0
+            if reinvest_shares <= 0 and (tx.get("nav") or 0) > 0 and (tx.get("amount") or 0) > 0:
+                reinvest_shares = tx["amount"] / tx["nav"]
+            current_shares = _r6(current_shares + reinvest_shares)
+        elif tx_type == "CORRECTION":
+            if (tx.get("nav") or 0) <= 0:
+                continue
+            new_cost_total = _r2(tx.get("shares", 0) * tx["nav"])
+            delta_amount = _r2(new_cost_total - current_cost_total)
+            delta_total = _r2(delta_total + delta_amount)
+            current_shares = _r6(tx.get("shares", 0))
+            current_cost_total = new_cost_total
+    return delta_total
+
 
 def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     """
@@ -414,7 +469,8 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     official_nav: float = last_nav if last_nav > 0 else 1.0
 
     # ── 基于官方净值的稳定字段（对齐前端 currentMarketValue / holdingProfit）──
-    cost_total = _r2(shares * cost_per_share)
+    _stored_cost_total = fund.get("holdingCostTotal")
+    cost_total = _r2(_stored_cost_total) if _stored_cost_total is not None else _r2(shares * cost_per_share)
     market_value = _r2(shares * official_nav)
     holding_profit = _r2(market_value - cost_total)
     total_profit = _r2(holding_profit + realized)
@@ -426,7 +482,23 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     else:
         today_profit = 0.0
 
-    # 展示用净值：盘中优先展示估算，否则展示官方
+    _effective_date = fund.get("displayDate") or time.strftime("%Y-%m-%d")
+    _cash_dividend_today = 0.0
+    _buy_total = 0.0
+    for tx in fund.get("transactions") or []:
+        tx_status = tx.get("status", "")
+        if tx_status != "CONFIRMED":
+            continue
+        tx_type = tx.get("type", "")
+        if tx_type == "BUY":
+            _buy_total += tx.get("amount") or 0
+        elif (tx_type == "DIVIDEND_CASH"
+              and (tx.get("confirmDate") or tx.get("date")) == _effective_date):
+            _cash_dividend_today += tx.get("amount") or 0
+    _correction_delta = _calc_correction_delta_total(fund.get("transactions") or [])
+    today_profit = _r2(today_profit + _cash_dividend_today)
+    total_invested = _r2(_buy_total + _correction_delta)
+
     display_nav = estimated_nav if estimated_nav > 0 else official_nav
 
     return {
@@ -437,6 +509,7 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
         "holdingProfit": holding_profit,
         "realizedProfit": _r2(realized),
         "totalProfit": total_profit,
+        "totalInvested": total_invested,
         "returnRate": return_rate,
         "todayProfit": today_profit,
         "currentNav": display_nav,
@@ -550,6 +623,7 @@ async def get_tool_manifest() -> dict:
                 "get_transactions",
                 "get_groups",
                 "get_tags",
+                "get_night_watchlist",
             ],
             "market": [
                 "search_item",
@@ -561,16 +635,34 @@ async def get_tool_manifest() -> dict:
                 "get_fund_fees",
                 "get_fund_period_rank",
                 "get_batch_fund_period_ranks",
+                "get_fund_profile",
+                "get_batch_fund_profiles",
                 "get_night_estimate",
                 "get_daily_rank",
                 "get_status",
                 "get_overview",
                 "get_indices",
+                "get_holder_ranking",
                 "get_benchmark_history",
+                "get_instrument_catalog",
+                "get_instrument_quotes",
+                "get_instrument_timeline",
+                "get_instrument_history",
                 "calculate_trading_dates",
                 "get_next_trading_day",
             ],
-            "community": ["get_danmaku", "send_danmaku", "get_notices"],
+            "community": [
+                "get_danmaku",
+                "send_danmaku",
+                "get_notices",
+                "get_community_ranking",
+                "get_community_my_rank",
+                "get_community_user",
+                "get_community_stats",
+                "get_community_following",
+                "search_community_users",
+                "get_community_notices",
+            ],
             "trade": ["request_transaction", "get_agent_requests", "update_agent_request"],
             "imports": [
                 "import_holding_screenshots",
@@ -744,6 +836,46 @@ async def get_fund_period_rank(code: str) -> dict:
 
 
 @mcp.tool()
+async def get_fund_profile(code: str) -> dict:
+    """
+    获取基金画像，包含基本信息、费率、业绩排名、持仓、行业分布、分红、风险指标等综合数据。
+    比 get_item_detail 更聚焦于基金本身的静态属性，适合深度分析和对比。
+
+    Args:
+        code: 项目编号，如 "000001"
+    """
+    _require_token()
+    validated_code = _validate_fund_code(code)
+    return await _get(f"/api/fund/profile/{validated_code}")
+
+
+@mcp.tool()
+async def get_batch_fund_profiles(codes: list[str]) -> dict:
+    """
+    批量获取多只基金的画像数据，返回 code → 画像的映射。
+    适合同时对比多只基金的基本面，一次最多 20 只。
+
+    Args:
+        codes: 项目编号列表，如 ["000001", "161725"]，最多 20 个
+    """
+    _require_token()
+    validated_codes = []
+    seen = set()
+    for code in codes[:20]:
+        try:
+            normalized = _validate_fund_code(code)
+            if normalized not in seen:
+                validated_codes.append(normalized)
+                seen.add(normalized)
+        except ValueError:
+            continue
+    if not validated_codes:
+        return {"data": {}}
+    payload = await _post("/api/fund/profile/batch", {"codes": validated_codes})
+    return payload.get("data", {}) if isinstance(payload, dict) else {}
+
+
+@mcp.tool()
 async def get_batch_fund_period_ranks(codes: list[str]) -> dict:
     """
     批量获取多个项目的近期业绩排名，返回 code → 排名数据的映射。
@@ -805,17 +937,28 @@ async def get_indices() -> list:
 
 
 @mcp.tool()
-async def get_night_estimate(codes: list[str]) -> dict:
+async def get_holder_ranking() -> dict:
+    """
+    获取 App 内持有人数排行榜（持有用户最多的 30 只基金）。
+    返回每只基金的持有人数、最新涨跌幅，按涨幅排序。
+    适合了解"大家都在买什么"的社区热度。
+    """
+    _require_token()
+    return await _get("/api/market/holder-ranking")
+
+
+@mcp.tool()
+async def get_night_estimate(codes: list[str], force: bool = False) -> dict:
     """
     获取QDII基金的夜间实时估值（美股/港股盘后/盘前交易时段）。
     返回每只基金的盘后涨跌幅、持仓穿透明细、汇率变动等数据。
     仅在美股交易时段（北京时间夜间）数据有效，需要会员权限。
 
     Args:
-        codes: 基金代码列表，如 ["016665", "018147"]，逗号拼接为查询参数
+        codes: 基金代码列表，如 ["016665", "018147"]，最多 50 个
+        force: 是否强制刷新（跳过服务端缓存），默认 false
     """
     _require_token()
-    # 验证并去重基金代码
     validated_codes = []
     seen = set()
     for code in codes[:50]:
@@ -829,7 +972,10 @@ async def get_night_estimate(codes: list[str]) -> dict:
     if not validated_codes:
         return {"status": "empty", "items": []}
     code_str = ",".join(validated_codes)
-    return await _get("/api/market/night-est", params={"codes": code_str})
+    params = {"codes": code_str}
+    if force:
+        params["force"] = "true"
+    return await _get("/api/market/night-est", params=params)
 
 
 @mcp.tool()
@@ -885,6 +1031,69 @@ async def get_benchmark_history(code: str = "sh000300") -> list:
         raise ValueError(f"基准代码格式无效：{code}，应为 sh000300 或 510300 格式")
     data = await _get(f"/api/market/benchmark-history/{normalized}")
     return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def get_instrument_catalog() -> dict:
+    """
+    获取市场行情仪表盘的可选指数/ETF 目录。
+    返回完整的标的分类列表和默认展示代码，用于了解可查询的指数/ETF 范围。
+    """
+    _require_token()
+    return await _get("/api/market/indices/catalog")
+
+
+@mcp.tool()
+async def get_instrument_quotes(codes: list[str]) -> dict:
+    """
+    批量获取指数/ETF 实时行情报价。
+    适合同时查看多个指数的最新价格、涨跌幅。
+
+    Args:
+        codes: 标的代码列表，如 ["sh000300", "sh000001", "sz399001"]，最多 20 个
+    """
+    _require_token()
+    validated = [str(c).strip() for c in (codes or [])[:20] if str(c).strip()]
+    if not validated:
+        return {"quotes": [], "polledAt": None}
+    code_str = ",".join(validated)
+    return await _get("/api/market/indices/latest", params={"codes": code_str})
+
+
+@mcp.tool()
+async def get_instrument_timeline(code: str, range: str = "1d") -> dict:
+    """
+    获取单个指数/ETF 的分时走势（5 分钟 K 线）。
+    适合了解今日盘中走势。
+
+    Args:
+        code: 标的代码，如 "sh000300"
+        range: 时间范围，默认 "1d"（当日）
+    """
+    _require_token()
+    normalized = str(code or "").strip()
+    if not normalized:
+        raise ValueError("标的代码不能为空")
+    return await _get("/api/market/indices/timeline", params={"code": normalized, "range": range})
+
+
+@mcp.tool()
+async def get_instrument_history(code: str, period: str = "1m") -> dict:
+    """
+    获取单个指数/ETF 的日线历史数据。
+    适合分析中长期走势。
+
+    Args:
+        code: 标的代码，如 "sh000300"
+        period: 时间周期，可选 "1m"（1个月）、"3m"（3个月）、"6m"（6个月）、"1y"（1年）
+    """
+    _require_token()
+    normalized = str(code or "").strip()
+    if not normalized:
+        raise ValueError("标的代码不能为空")
+    if period not in ("1m", "3m", "6m", "1y"):
+        period = "1m"
+    return await _get("/api/market/indices/history", params={"code": normalized, "period": period})
 
 
 @mcp.tool()
@@ -958,7 +1167,7 @@ async def _download_portfolio() -> dict:
         return _portfolio_cache["data"]
 
     # 慢速路径：加锁后二次检查，确保只有一个协程执行下载和写入
-    async with _download_lock:
+    async with _get_download_lock():
         now = time.monotonic()
         if _portfolio_cache["data"] is not None and now - _portfolio_cache["ts"] < _PORTFOLIO_TTL:
             return _portfolio_cache["data"]
@@ -1179,6 +1388,7 @@ async def get_records(include_transactions: bool = False) -> dict:
     total_holding_profit = 0.0
     total_cumulative_profit = 0.0
     total_in_transit = 0.0
+    total_invested = 0.0
     for f in holdings:
         total_market_value = _r2(total_market_value + f.get("marketValue", 0))
         total_cost = _r2(total_cost + f.get("costTotal", 0))
@@ -1186,7 +1396,8 @@ async def get_records(include_transactions: bool = False) -> dict:
         total_holding_profit = _r2(total_holding_profit + f.get("holdingProfit", 0))
         total_cumulative_profit = _r2(total_cumulative_profit + f.get("totalProfit", 0))
         total_in_transit = _r2(total_in_transit + f.get("inTransitAmount", 0))
-    total_return_rate = _r2_pct(total_cumulative_profit, total_cost)
+        total_invested = _r2(total_invested + f.get("totalInvested", 0))
+    total_return_rate = _r2_pct(total_cumulative_profit, total_invested) if total_invested > 0 else 0.0
     total_holding_return_rate = _r2_pct(total_holding_profit, total_cost)
 
     return {
@@ -1200,6 +1411,7 @@ async def get_records(include_transactions: bool = False) -> dict:
             "totalHoldingProfit": total_holding_profit,
             "totalHoldingReturnRate": total_holding_return_rate,
             "cumulativeProfit": total_cumulative_profit,
+            "totalInvested": total_invested,
             "totalReturnRate": total_return_rate,
             "heldItemCount": len(holdings),
             "totalInTransitAmount": total_in_transit,
@@ -1212,7 +1424,7 @@ async def get_records(include_transactions: bool = False) -> dict:
 async def get_summary() -> dict:
     """
     获取持仓总览摘要（总市值、今日收益、累计收益、收益率）。
-    比 get_records 更轻量，适合快速查询资产概况。
+    输出比 get_records 更精简（不含每只基金明细），适合快速查询资产概况。
 
     返回的 dataUpdatedAt 字段表示云同步数据的更新时间，请将此时间告知用户，
     让其了解数据是否为最新（若时间较旧，提示用户在 App 触发同步）。
@@ -1262,14 +1474,16 @@ async def request_transaction(
     if tx_type not in ("BUY", "SELL"):
         return "❌ record_type 必须是 'BUY' 或 'SELL'"
 
-    # 输入验证
     validated_code = _validate_fund_code(item_code)
+    normalized_name = str(item_name or "").strip()
+    if not normalized_name:
+        raise ValueError("item_name 不能为空")
     validated_amount = _validate_amount(amount)
     validated_date = _validate_date(date)
 
     payload_dict: dict = {
         "code": validated_code,
-        "name": item_name,
+        "name": normalized_name,
         "amount": validated_amount,
         "date": validated_date,
         "note": note,
@@ -1306,10 +1520,13 @@ async def update_agent_request(request_id: str, status: str) -> dict:
         status: "DISMISSED" 或 "PROCESSED"。Agent 常用 "DISMISSED"。
     """
     _require_token()
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        raise ValueError("request_id 不能为空")
     normalized = (status or "").strip().upper()
     if normalized not in ("PROCESSED", "DISMISSED"):
         raise ValueError("status 必须是 PROCESSED 或 DISMISSED")
-    return await _put(f"/api/agent/request/{request_id}", {"status": normalized})
+    return await _put(f"/api/agent/request/{normalized_request_id}", {"status": normalized})
 
 
 @mcp.tool()
@@ -1472,11 +1689,9 @@ async def send_danmaku(fund_code: str, text: str) -> dict:
         raise ValueError("弹幕内容不能为空")
     if len(normalized_text) > 30:
         raise ValueError(f"弹幕内容过长：{len(normalized_text)} 字，最多 30 字")
-    # 颜色由后端/App自动设置，使用默认值
     return await _post("/api/danmaku/send", {
         "fund_code": validated_code,
         "text": normalized_text,
-        "color": "#ffffff",  # 默认白色，App会根据涨跌覆盖
     })
 
 
@@ -1489,6 +1704,105 @@ async def get_notices(since: float = 0) -> list:
         since: Unix 秒时间戳，只返回该时间之后的公告；默认返回最近公告。
     """
     data = await _get("/api/notices", params={"since": since})
+    return data if isinstance(data, list) else []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tools: 喵舍社区（需 Agent Token + PRO 会员）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def get_community_ranking(tab: str = "weekly", page: int = 1, page_size: int = 50) -> dict:
+    """
+    获取喵舍收益率排行榜。
+
+    Args:
+        tab: 排行榜类型，可选 "weekly"（周收益）、"monthly"（月收益）、"total"（总收益）
+        page: 页码，从 1 开始
+        page_size: 每页条数，1-100，默认 50
+    """
+    _require_token()
+    if tab not in ("weekly", "monthly", "total"):
+        tab = "weekly"
+    return await _get("/api/community/ranking", params={
+        "tab": tab,
+        "page": max(1, page),
+        "page_size": min(100, max(1, page_size)),
+    })
+
+
+@mcp.tool()
+async def get_community_my_rank() -> dict:
+    """
+    获取当前用户在各排行榜的排名。
+    适合回答"我排第几"类问题。
+    """
+    _require_token()
+    return await _get("/api/community/my-rank")
+
+
+@mcp.tool()
+async def get_community_user(uid: str) -> dict:
+    """
+    获取喵舍用户详情，包含收益率和十大重仓（前5）。
+    适合查看其他用户的投资组合。
+
+    Args:
+        uid: 用户的 8 位 UID
+    """
+    _require_token()
+    normalized = str(uid or "").strip()
+    if not normalized:
+        raise ValueError("UID 不能为空")
+    return await _get(f"/api/community/user/{normalized}")
+
+
+@mcp.tool()
+async def get_community_stats() -> dict:
+    """
+    获取当前用户的关注数和粉丝数。
+    """
+    _require_token()
+    return await _get("/api/community/stats")
+
+
+@mcp.tool()
+async def get_community_following() -> list:
+    """
+    获取当前用户的关注列表。
+    """
+    _require_token()
+    data = await _get("/api/community/following")
+    return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def search_community_users(query: str) -> list:
+    """
+    搜索喵舍用户，支持 UID 精确匹配和昵称模糊匹配。
+
+    Args:
+        query: 搜索关键词（UID 或昵称）
+    """
+    _require_token()
+    normalized = str(query or "").strip()
+    if not normalized:
+        raise ValueError("搜索关键词不能为空")
+    data = await _get("/api/community/search", params={"q": normalized})
+    return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def get_community_notices(since: float = 0) -> list:
+    """
+    获取当前用户的社区定向通知（如排名变化、被关注等）。
+    与 get_notices（系统公告）不同，这是用户个人的社区通知。
+
+    Args:
+        since: Unix 秒时间戳，只返回该时间之后的通知；默认返回最近通知。
+    """
+    _require_token()
+    data = await _get("/api/community/notices", params={"since": since})
     return data if isinstance(data, list) else []
 
 

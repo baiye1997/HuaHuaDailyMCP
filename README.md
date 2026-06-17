@@ -11,7 +11,7 @@
 - 在 App「小窝 / 设置 → Agent 访问令牌」生成新的 Agent Token。
 - Token 只显示一次，配置为环境变量 `HUAHUA_AGENT_TOKEN`。
 
-官方 API 固定地址：`https://huahua.preview.aliyun-zeabur.cn`
+官方 API 默认地址：`https://huahuadaily.cn`，可通过 `HUAHUA_API_BASE` 覆盖。
 
 ## 安装方式
 
@@ -178,6 +178,7 @@ clawhub install huahua-daily
 - 轻确认后调用 request_import_review，把整批结果发送到 App 现有导入确认页。
 - 不要直接写云同步，不要声称导入已完成；用户必须在 App 批量确认后才会写入。
 - 数据来自云同步。若用户刚在 App 操作，提醒其先在 App 执行「立即同步」再查询。
+- 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
 ```
 
 ## 工具能力
@@ -209,7 +210,7 @@ clawhub install huahua-daily
 - `get_fund_fees(code)`
 - `get_fund_period_rank(code)`
 - `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只。
-- `get_night_estimate(codes)`：QDII 基金夜间实时估值，含持仓穿透、汇率变动（需会员）。
+- `get_night_estimate(codes, force=false)`：QDII 基金夜间实时估值，含持仓穿透、汇率变动（需会员）。`force=true` 跳过服务端缓存。
 - `get_night_watchlist()`：读取用户在 App 夜盘估值页手动添加的基金代码列表（来自云同步快照），通常作为 `get_night_estimate` 的前置工具，免去用户手动报代码。
 - `get_daily_rank()`
 - `get_status()`
@@ -218,6 +219,13 @@ clawhub install huahua-daily
 - `get_benchmark_history(code="sh000300")`
 - `calculate_trading_dates(date, time_mode="PRE_MARKET", confirm_days=1)`
 - `get_next_trading_day(date)`
+- `get_fund_profile(code)`：基金画像（综合信息）。
+- `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只。
+- `get_holder_ranking()`：App 内持有人数排行榜。
+- `get_instrument_catalog()`：指数/ETF 目录。
+- `get_instrument_quotes(codes)`：指数/ETF 实时行情。
+- `get_instrument_timeline(code, range="1d")`：指数/ETF 分时走势。
+- `get_instrument_history(code, period="1m")`：指数/ETF 历史数据。
 
 交易请求：
 
@@ -236,6 +244,13 @@ clawhub install huahua-daily
 - `get_danmaku(code)`
 - `send_danmaku(fund_code, text)`：发送弹幕，颜色由 App 根据涨跌自动设置
 - `get_notices(since=0)`
+- `get_community_ranking(tab="weekly", page=1, page_size=50)`：收益率排行榜（周/月/总）。
+- `get_community_my_rank()`：我的排名。
+- `get_community_user(uid)`：用户详情（十大重仓前5）。
+- `get_community_stats()`：关注/粉丝数。
+- `get_community_following()`：关注列表。
+- `search_community_users(query)`：搜索用户（UID/昵称）。
+- `get_community_notices(since=0)`：社区定向通知。
 
 ## 截图导入流程
 
