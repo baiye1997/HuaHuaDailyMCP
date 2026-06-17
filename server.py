@@ -242,6 +242,23 @@ async def _put(path: str, body: dict = None) -> dict:
         raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
 
 
+async def _delete(path: str) -> dict:
+    try:
+        r = await _get_client().delete(_url(path), headers=_headers())
+        if r.status_code == 401:
+            raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
+        if r.status_code == 403:
+            raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
+        r.raise_for_status()
+        return r.json()
+    except ValueError:
+        raise
+    except httpx.TimeoutException:
+        raise RuntimeError("请求超时，请稍后重试。")
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"服务器返回错误 {e.response.status_code}，请稍后重试。")
+
+
 def _unwrap_sync_payload(raw: dict) -> dict:
     json_data = raw.get("json_data") or "{}"
     updated_at = raw.get("updated_at", "")
@@ -641,6 +658,7 @@ async def get_tool_manifest() -> dict:
                 "get_daily_rank",
                 "get_status",
                 "get_overview",
+                "get_fund_flow",
                 "get_indices",
                 "get_holder_ranking",
                 "get_benchmark_history",
@@ -662,12 +680,22 @@ async def get_tool_manifest() -> dict:
                 "get_community_following",
                 "search_community_users",
                 "get_community_notices",
+                "get_community_authorization",
+                "authorize_community",
+                "revoke_community_authorization",
+                "sync_community_returns",
+                "follow_community_user",
             ],
             "trade": ["request_transaction", "get_agent_requests", "update_agent_request"],
             "imports": [
                 "import_holding_screenshots",
                 "import_transaction_screenshots",
                 "request_import_review",
+            ],
+            "misc": [
+                "analyze_jcti",
+                "get_app_version",
+                "get_app_versions",
             ],
         },
         "safety": {
@@ -924,6 +952,19 @@ async def get_overview() -> dict:
     """
     _require_token()
     return await _get("/api/market/overview")
+
+
+@mcp.tool()
+async def get_fund_flow() -> dict:
+    """
+    获取资金流向数据，包括主力资金流向和板块资金流向。
+    需要 PRO 会员权限。适合回答"资金在流向哪里""哪些板块受追捧"等问题。
+
+    Returns:
+        dict 包含 fundFlow（基金资金流）、sectorFlow（板块资金流）、polledAt（数据时间）
+    """
+    _require_token()
+    return await _get("/api/market/fund-flow")
 
 
 @mcp.tool()
@@ -1804,6 +1845,181 @@ async def get_community_notices(since: float = 0) -> list:
     _require_token()
     data = await _get("/api/community/notices", params={"since": since})
     return data if isinstance(data, list) else []
+
+
+@mcp.tool()
+async def get_community_authorization() -> dict:
+    """
+    查询当前用户的喵舍社区授权状态。
+    返回是否已授权、是否展示金额、是否匿名等信息。
+    适合在首次使用社区功能前检查授权状态。
+    """
+    _require_token()
+    return await _get("/api/community/authorization")
+
+
+@mcp.tool()
+async def authorize_community(
+    show_amount: bool = False,
+    anonymous: bool = False,
+) -> dict:
+    """
+    授权参与喵舍社区排行榜。调用前须向用户确认是否愿意公开持仓数据。
+    授权后用户的收益率将出现在社区排行榜中。
+
+    Args:
+        show_amount: 是否公开展示持仓金额（默认 false，仅展示收益率）
+        anonymous: 是否匿名参与（默认 false）
+    """
+    _require_token()
+    return await _post("/api/community/authorize", {
+        "authorized": True,
+        "show_amount": show_amount,
+        "anonymous": anonymous,
+        "disclaimer_accepted": True,
+    })
+
+
+@mcp.tool()
+async def revoke_community_authorization() -> dict:
+    """
+    取消喵舍社区授权，退出排行榜。
+    取消后用户的收益率数据将从排行榜中移除。
+    """
+    _require_token()
+    return await _delete("/api/community/authorize")
+
+
+@mcp.tool()
+async def sync_community_returns(
+    weekly_return: float,
+    monthly_return: float,
+    total_return: float,
+    fund_count: int,
+    top_fund_code: str = "",
+    top_fund_name: str = "",
+) -> dict:
+    """
+    将用户收益率数据同步到喵舍社区，用于排行榜排名。
+    通常由 App 自动调用；Agent 可在用户明确要求刷新排名时手动触发。
+
+    Args:
+        weekly_return: 近一周收益率（百分比数值，如 5.2 表示 +5.2%）
+        monthly_return: 近一月收益率
+        total_return: 累计总收益率
+        fund_count: 持仓基金数量
+        top_fund_code: 第一重仓基金代码（可选）
+        top_fund_name: 第一重仓基金名称（可选）
+    """
+    _require_token()
+    return await _post("/api/community/sync-returns", {
+        "weekly_return": weekly_return,
+        "monthly_return": monthly_return,
+        "total_return": total_return,
+        "fund_count": fund_count,
+        "top_fund_code": top_fund_code,
+        "top_fund_name": top_fund_name,
+    })
+
+
+@mcp.tool()
+async def follow_community_user(target_uid: str) -> dict:
+    """
+    关注/取消关注喵舍社区用户（取反操作）。
+    若已关注则取消关注，若未关注则添加关注。
+
+    Args:
+        target_uid: 目标用户的 8 位 UID
+    """
+    _require_token()
+    normalized = str(target_uid or "").strip()
+    if not normalized:
+        raise ValueError("target_uid 不能为空")
+    return await _post("/api/community/follow", {"target_uid": normalized})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tools: JCTI 投资人格测试（需 Agent Token）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def analyze_jcti(
+    personality_id: str,
+    ye: float = 0,
+    wen: float = 0,
+    sui: float = 0,
+    duan: float = 0,
+) -> dict:
+    """
+    提交 JCTI（韭彩测试指标）四维分数，获取 AI 个性化投资人格分析。
+    需要 VIP 或 PRO 会员权限。
+
+    人格 ID 对照：
+    - tepulang: 特普朗（高野高稳）
+    - jiuhuang: 韭黄（高野高随）
+    - faguo-dushen: 法国赌神（高野高短）
+    - ji-wuli: 姬无力（低野低稳）
+    - yingshengchong: 应声虫（低野高随）
+    - shanmu: 山姆（低野高稳）
+    - taozhongren: 套中人（低野高短）
+    - tuoluowang: 陀螺王（高野低短）
+
+    Args:
+        personality_id: 人格 ID，如 "tepulang"
+        ye: 野维度分数（0-100）
+        wen: 稳维度分数（0-100）
+        sui: 随维度分数（0-100）
+        duan: 短维度分数（0-100）
+
+    Returns:
+        dict 包含 analysis 字段（AI 生成的个性化分析文本）
+    """
+    _require_token()
+    valid_ids = {
+        "tepulang", "jiuhuang", "faguo-dushen", "ji-wuli",
+        "yingshengchong", "shanmu", "taozhongren", "tuoluowang",
+    }
+    normalized = str(personality_id or "").strip().lower()
+    if normalized not in valid_ids:
+        raise ValueError(f"无效的 personality_id：{personality_id}，有效值：{', '.join(sorted(valid_ids))}")
+    for name, val in [("ye", ye), ("wen", wen), ("sui", sui), ("duan", duan)]:
+        if not (0 <= val <= 100):
+            raise ValueError(f"{name} 分数必须在 0-100 之间，收到：{val}")
+    return await _post("/api/jcti/analyze", {
+        "scores": {"ye": ye, "wen": wen, "sui": sui, "duan": duan},
+        "personality_id": normalized,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tools: 版本信息（需 Agent Token）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def get_app_version() -> dict:
+    """
+    获取最新 App 版本信息，包括版本号、更新日志、下载地址、是否强制更新。
+    适合回答"最新版本是多少""有什么新功能"等问题。
+    """
+    _require_token()
+    return await _get("/api/version")
+
+
+@mcp.tool()
+async def get_app_versions(page: int = 1, page_size: int = 5) -> dict:
+    """
+    获取 App 版本历史列表（分页，从新到旧）。
+    适合查看历史更新记录。
+
+    Args:
+        page: 页码，从 1 开始
+        page_size: 每页条数，1-20，默认 5
+    """
+    _require_token()
+    return await _get("/api/versions", params={
+        "page": max(1, page),
+        "page_size": min(20, max(1, page_size)),
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

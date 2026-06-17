@@ -1,7 +1,6 @@
 ---
 name: huahua-daily
 description: Use HuahuaDaily MCP to query portfolio, transactions, market data, screenshot imports, and send App-confirmed trade/import requests.
-version: 2.0.3
 ---
 
 # 花花日记助手（HuahuaDaily）
@@ -29,6 +28,14 @@ get_tool_manifest()
 - 不访问用户数据，不消耗行情请求。
 
 Token 缺失、无效或过期时，提示用户在 App「小窝 / 设置 → Agent 访问令牌」重新生成，并配置环境变量 `HUAHUA_AGENT_TOKEN`。
+
+确认当前账号信息（昵称、UID、会员状态）：
+
+```json
+get_current_user()
+```
+
+适合回答"我是谁""我的会员什么时候到期"等问题。
 
 ## 3. 查询持仓和云同步
 
@@ -66,6 +73,8 @@ get_records({"include_transactions": false})
 - `groups`：分组。
 - `summary`：汇总。
 - `dataUpdatedAt`：云同步时间。
+
+**云同步不含行情数据**：`lastNav` 不在云同步字段中，server 返回的 `marketValue` 仅等于 `holdingShares`（份额数），不是真实市值。拿到 `holdings` 后，必须用 `get_item_estimate` 批量拉取净值，自行计算 `marketValue = holdingShares × estimatedNav`。
 
 如果用户要求交易流水、成本来源、审计收益，再调用：
 
@@ -218,7 +227,18 @@ get_holder_ranking()
 
 返回 App 内持有人数最多的 30 只基金，含持有人数和涨跌幅。
 
-### 4.6 用户问指数/ETF 行情
+### 4.6 用户问"资金在流向哪里/板块热度"
+
+资金流向：
+
+```json
+get_fund_flow()
+```
+
+返回 `fundFlow`（基金资金流）、`sectorFlow`（板块资金流）、`polledAt`（数据时间）。
+需要 PRO 会员权限。适合回答"主力资金在买什么板块""哪些基金被大额申购/赎回"等问题。
+
+### 4.7 用户问指数/ETF 行情
 
 目录：
 
@@ -244,7 +264,7 @@ get_instrument_timeline({"code": "sh000300"})
 get_instrument_history({"code": "sh000300", "period": "1m"})
 ```
 
-### 4.7 用户问"跑赢大盘/对比沪深300"
+### 4.8 用户问"跑赢大盘/对比沪深300"
 
 默认沪深300：
 
@@ -260,7 +280,7 @@ get_benchmark_history({"code": "sh000300"})
 
 需要基金自身走势时，再调用 `get_item_history(code)`。
 
-### 4.8 用户问 QDII 基金夜盘
+### 4.9 用户问 QDII 基金夜盘
 
 QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段。夜盘估值在美股交易时段（21:30–次日04:00 夏令时）提供实时持仓穿透。
 
@@ -291,7 +311,7 @@ get_night_estimate({"codes": ["016665", "018147"]})
 - 不要在 A 股交易时段频繁调用。
 - 夜盘自选列表需要 App 至少做过一次云同步才能被 MCP 读到；旧版本 App（未升级到含夜盘同步的版本）的备份里没有 nightWatchCodes 字段，此时 `has_customized` 会是 `false`。
 
-### 4.9 用户问交易日/T+N
+### 4.10 用户问交易日/T+N
 
 下一个交易日：
 
@@ -576,11 +596,86 @@ get_community_following()
 get_community_notices({"since": 0})
 ```
 
+授权管理：
+
+```json
+// 查询授权状态
+get_community_authorization()
+
+// 授权参与排行（须向用户确认）
+authorize_community({"show_amount": false, "anonymous": false})
+
+// 取消授权，退出排行
+revoke_community_authorization()
+```
+
+关注操作：
+
+```json
+// 关注/取消关注（取反操作）
+follow_community_user({"target_uid": "12345678"})
+```
+
+收益同步：
+
+```json
+// 手动同步收益到社区（通常由 App 自动完成，Agent 仅在用户明确要求时调用）
+sync_community_returns({
+  "weekly_return": 5.2,
+  "monthly_return": 12.8,
+  "total_return": 35.6,
+  "fund_count": 8,
+  "top_fund_code": "110022",
+  "top_fund_name": "易方达消费行业"
+})
+```
+
 规则：
 - 社区功能需要 PRO 会员。
 - `get_community_notices` 与 `get_notices` 不同：前者是个人社区通知，后者是系统公告。
+- 授权操作前须向用户确认是否愿意公开持仓数据。
+- `follow_community_user` 是取反操作：已关注则取消，未关注则添加。
+- `sync_community_returns` 的收益率参数为百分比数值（如 5.2 表示 +5.2%），而非小数。
 
-## 8. 常见降级
+## 8. JCTI 投资人格分析
+
+用户完成 JCTI（韭彩测试指标）答题后，可提交四维分数获取 AI 个性化分析：
+
+```json
+analyze_jcti({
+  "personality_id": "tepulang",
+  "ye": 85,
+  "wen": 60,
+  "sui": 30,
+  "duan": 45
+})
+```
+
+参数：
+- `personality_id`：人格 ID，可选 `tepulang`（特普朗）、`jiuhuang`（韭黄）、`faguo-dushen`（法国赌神）、`ji-wuli`（姬无力）、`yingshengchong`（应声虫）、`shanmu`（山姆）、`taozhongren`（套中人）、`tuoluowang`（陀螺王）。
+- `ye` / `wen` / `sui` / `duan`：野、稳、随、短四个维度的分数，每项 0-100。
+
+返回 AI 生成的个性化投资人格分析文本。需要 VIP 或 PRO 会员。
+
+## 9. App 版本信息
+
+最新版本：
+
+```json
+get_app_version()
+```
+
+返回版本号、更新日志、下载地址、是否强制更新。
+
+版本历史：
+
+```json
+get_app_versions({"page": 1, "page_size": 5})
+```
+
+适合回答"最新版本有什么新功能""历史更新记录"等问题。
+
+## 10. 常见降级
 
 - `401`：Token 无效或过期，要求用户重新生成。
 - `403`：权限不足或会员状态不满足，要求用户检查 PRO 状态。

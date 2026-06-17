@@ -11,7 +11,7 @@
 - 在 App「小窝 / 设置 → Agent 访问令牌」生成新的 Agent Token。
 - Token 只显示一次，配置为环境变量 `HUAHUA_AGENT_TOKEN`。
 
-官方 API 默认地址：`https://huahuadaily.cn`，可通过 `HUAHUA_API_BASE` 覆盖。
+官方 API 默认地址：`https://api.huahuadaily.cn`，可通过 `HUAHUA_API_BASE` 覆盖。
 
 ## 安装方式
 
@@ -179,6 +179,10 @@ clawhub install huahua-daily
 - 不要直接写云同步，不要声称导入已完成；用户必须在 App 批量确认后才会写入。
 - 数据来自云同步。若用户刚在 App 操作，提醒其先在 App 执行「立即同步」再查询。
 - 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
+- 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
+- 社区授权/关注/同步等写操作须向用户确认后再执行。
+- 用户完成 JCTI 答题后可调用 analyze_jcti 获取 AI 人格分析。
+- 查询 App 版本信息使用 get_app_version 或 get_app_versions。
 ```
 
 ## 工具能力
@@ -215,6 +219,7 @@ clawhub install huahua-daily
 - `get_daily_rank()`
 - `get_status()`
 - `get_overview()`
+- `get_fund_flow()`：资金流向数据（需 PRO 会员），返回 fundFlow、sectorFlow、polledAt。
 - `get_indices()`
 - `get_benchmark_history(code="sh000300")`
 - `calculate_trading_dates(date, time_mode="PRE_MARKET", confirm_days=1)`
@@ -251,6 +256,20 @@ clawhub install huahua-daily
 - `get_community_following()`：关注列表。
 - `search_community_users(query)`：搜索用户（UID/昵称）。
 - `get_community_notices(since=0)`：社区定向通知。
+- `get_community_authorization()`：查询社区授权状态。
+- `authorize_community(show_amount, anonymous)`：授权参与喵舍排行。
+- `revoke_community_authorization()`：取消授权，退出排行。
+- `sync_community_returns(weekly_return, monthly_return, total_return, fund_count, top_fund_code?, top_fund_name?)`：同步收益数据到社区。
+- `follow_community_user(target_uid)`：关注/取消关注用户（取反操作）。
+
+JCTI 投资人格：
+
+- `analyze_jcti(personality_id, ye, wen, sui, duan)`：提交四维分数，获取 AI 个性化投资人格分析。
+
+版本信息：
+
+- `get_app_version()`：最新版本号、更新日志、下载地址。
+- `get_app_versions(page, page_size)`：版本历史列表（分页）。
 
 ## 截图导入流程
 
