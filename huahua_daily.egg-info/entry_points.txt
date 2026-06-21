@@ -1,2 +1,0 @@
-[console_scripts]
-huahua-daily = server:main

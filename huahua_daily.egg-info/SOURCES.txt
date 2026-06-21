@@ -1,9 +1,0 @@
-README.md
-pyproject.toml
-server.py
-huahua_daily.egg-info/PKG-INFO
-huahua_daily.egg-info/SOURCES.txt
-huahua_daily.egg-info/dependency_links.txt
-huahua_daily.egg-info/entry_points.txt
-huahua_daily.egg-info/requires.txt
-huahua_daily.egg-info/top_level.txt
