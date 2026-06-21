@@ -90,24 +90,35 @@ _ALLOWED_IMAGE_MIMES = {
     "image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp",
 }
 
-def _validate_image_file(filepath: str, content: bytes, mime: str) -> None:
+def _clear_session_caches() -> None:
+    """清理和当前 token/base_url 绑定的内存缓存，避免运行时切账号串数据。"""
+    _portfolio_cache["data"] = None
+    _portfolio_cache["ts"] = 0.0
+    _estimate_cache.clear()
+
+
+def _detect_image_mime(content: bytes) -> Optional[str]:
+    if content[:8] == b'\x89PNG\r\n\x1a\n':
+        return "image/png"
+    if content[:2] == b'\xff\xd8':
+        return "image/jpeg"
+    if content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+        return "image/webp"
+    if content[:6] in (b'GIF87a', b'GIF89a'):
+        return "image/gif"
+    if content[:2] == b'BM':
+        return "image/bmp"
+    return None
+
+
+def _validate_image_file(filepath: str, content: bytes, mime: str) -> str:
     """验证图片文件大小和格式。"""
     if len(content) > _MAX_IMAGE_SIZE:
         raise ValueError(f"图片文件过大：{len(content) / 1024 / 1024:.1f}MB，最大允许 10MB")
-    if mime and mime not in _ALLOWED_IMAGE_MIMES:
-        # 尝试从文件头检测真实格式
-        if content[:8] == b'\x89PNG\r\n\x1a\n':
-            pass  # PNG
-        elif content[:2] == b'\xff\xd8':
-            pass  # JPEG
-        elif content[:4] == b'RIFF' and content[8:12] == b'WEBP':
-            pass  # WebP
-        elif content[:6] in (b'GIF87a', b'GIF89a'):
-            pass  # GIF
-        elif content[:2] == b'BM':
-            pass  # BMP
-        else:
-            raise ValueError(f"不支持的图片格式：{mime}，仅支持 JPEG/PNG/WebP/GIF/BMP")
+    detected_mime = _detect_image_mime(content)
+    if not detected_mime:
+        raise ValueError(f"不支持的图片格式：{mime or 'unknown'}，仅支持 JPEG/PNG/WebP/GIF/BMP")
+    return detected_mime
 
 def _validate_fund_code(code: str) -> str:
     """验证并规范化基金代码（6位数字）。"""
@@ -291,7 +302,7 @@ def _normalize_upload_files(
         with open(clean_path, "rb") as f:
             content = f.read()
         mime = mimetypes.guess_type(clean_path)[0] or "application/octet-stream"
-        _validate_image_file(clean_path, content, mime)
+        mime = _validate_image_file(clean_path, content, mime)
         files.append((os.path.basename(clean_path), content, mime))
     for idx, item in enumerate(images_base64 or []):
         if not isinstance(item, dict):
@@ -305,7 +316,7 @@ def _normalize_upload_files(
             content = base64.b64decode(raw_b64, validate=True)
         except Exception:
             raise ValueError(f"{filename} 的 base64 内容无效")
-        _validate_image_file(filename, content, mime)
+        mime = _validate_image_file(filename, content, mime)
         files.append((filename, content, mime))
     if not files:
         raise ValueError("请提供 image_paths 或 images_base64")
@@ -463,7 +474,19 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     """
     shares: float = fund.get("holdingShares", 0) or 0
     cost_per_share: float = fund.get("holdingCost", 0) or 0
-    last_nav: float = fund.get("lastNav", 0) or 0
+    last_nav: float = 0
+    # 云快照只提供最后一次官方净值基线；优先采用本次估值接口返回的官方净值，
+    # 兼容旧云快照没有 lastNav 的用户，避免错误退化为 1.0。
+    for raw_nav in (
+        est.get("dwjz"), est.get("lastNav"), est.get("last_nav"), fund.get("lastNav"),
+    ):
+        try:
+            candidate = float(raw_nav or 0)
+        except (TypeError, ValueError):
+            continue
+        if candidate > 0:
+            last_nav = candidate
+            break
     realized: float = fund.get("realizedProfit", 0) or 0
 
     # 估算信息（timeout 帧视同无估算，对齐前端拒收逻辑）
@@ -482,16 +505,19 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     except (TypeError, ValueError):
         prev_nav = last_nav
 
-    # 官方净值（前端 getFundOfficialNav：lastNav > 0 ? lastNav : 1.0）
-    official_nav: float = last_nav if last_nav > 0 else 1.0
+    official_nav: float = last_nav if last_nav > 0 else 0
+    # 旧云快照且行情源只返回盘中估值时，用本次估值作为临时计价基线；
+    # 两者都缺失则保持 0 并显式标记不可计价，绝不再伪造净值 1.0。
+    valuation_nav: float = official_nav or estimated_nav
+    valuation_available = valuation_nav > 0
 
     # ── 基于官方净值的稳定字段（对齐前端 currentMarketValue / holdingProfit）──
     _stored_cost_total = fund.get("holdingCostTotal")
     cost_total = _r2(_stored_cost_total) if _stored_cost_total is not None else _r2(shares * cost_per_share)
-    market_value = _r2(shares * official_nav)
-    holding_profit = _r2(market_value - cost_total)
-    total_profit = _r2(holding_profit + realized)
-    return_rate = _r2_pct(holding_profit, cost_total)
+    market_value = _r2(shares * valuation_nav) if valuation_available else 0.0
+    holding_profit = _r2(market_value - cost_total) if valuation_available else 0.0
+    total_profit = _r2(holding_profit + realized) if valuation_available else realized
+    return_rate = _r2_pct(holding_profit, cost_total) if valuation_available else 0.0
 
     # ── 今日盈亏：estimatedNav vs prevNav（对齐前端 calculateFundDayProfit）──────
     if estimated_nav > 0 and prev_nav > 0 and shares > 0:
@@ -530,7 +556,8 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
         "returnRate": return_rate,
         "todayProfit": today_profit,
         "currentNav": display_nav,
-        "lastNav": official_nav,
+        "lastNav": official_nav if official_nav > 0 else None,
+        "valuationAvailable": valuation_available,
         "estimatedNav": estimated_nav if estimated_nav > 0 else None,
         "estimatedChangePercent": est.get("estimatedChangePercent"),
     }
@@ -613,6 +640,7 @@ async def set_token(token: str) -> str:
         token: 从 App 设置页「Agent 访问令牌」中生成的令牌（PRO 会员专属）
     """
     _session["token"] = token.strip()
+    _clear_session_caches()
     return f"✅ Token 已设置，将连接官方后端：{_session['base_url']}"
 
 
@@ -1413,7 +1441,7 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "code": code,
                 "name": fund.get("name", ""),
                 "type": fund.get("type", ""),
-                "lastNav": fund.get("lastNav"),
+                "lastNav": stats.get("lastNav"),
                 "estimatedNav": stats.get("estimatedNav"),
                 "estimatedChangePercent": stats.get("estimatedChangePercent"),
                 **({"transactions": txs} if include_transactions else {}),

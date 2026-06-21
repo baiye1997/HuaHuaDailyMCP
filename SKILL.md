@@ -15,6 +15,10 @@ This SKILL.md intentionally uses the smallest common Agent Skills format: YAML f
 
 Agent 不直接写入交易、不直接导入持仓、不覆盖云同步。所有买入、卖出、持仓导入、自选导入、交易记录导入，都必须由用户在 App 确认页最终确认。
 
+社区授权、取消授权、关注/取消关注、社区收益同步是直接后端写操作，不走 App 待确认页。只有用户明确确认该社区操作时才调用；不要把它们描述为“已发送到 App 等待确认”。
+
+MCP 可读取完整持仓、交易流水、原始云同步快照和截图内容，可能包含金额、成本、收益率等敏感投资数据。回答时不要主动暴露超过用户问题所需的明细。
+
 ## 2. 会话启动
 
 首次使用或不确定能力时，调用：
@@ -74,7 +78,7 @@ get_records({"include_transactions": false})
 - `summary`：汇总。
 - `dataUpdatedAt`：云同步时间。
 
-**云同步不含行情数据**：`lastNav` 不在云同步字段中，server 返回的 `marketValue` 仅等于 `holdingShares`（份额数），不是真实市值。拿到 `holdings` 后，必须用 `get_item_estimate` 批量拉取净值，自行计算 `marketValue = holdingShares × estimatedNav`。
+云同步会保存最后一次官方净值作为恢复基线，但不会保存盘中估值等高频行情。`get_records` 会主动拉取最新行情并优先使用接口返回的官方净值计算市值；若需要盘中估算口径，再调用 `get_item_estimate` 获取 `estimatedNav`。
 
 如果用户要求交易流水、成本来源、审计收益，再调用：
 
@@ -417,6 +421,8 @@ import_holding_screenshots({
 })
 ```
 
+本地路径模式会让 MCP server 读取并上传用户机器上的对应图片文件。只使用用户明确提供或当前对话中产生的截图路径；不要猜测、遍历或尝试读取无关文件。无法确认来源时优先使用 `images_base64`。
+
 `import_type` 说明：
 - `HOLDINGS`（默认）：持仓页面通常不显示基金代码，后端按名称四步匹配（可能出现模糊匹配）。
 - `WATCHLIST`：自选页面明确显示 6 位代码，后端用专门 prompt 提取代码并精确匹配；AI 漏识别代码时回退名称匹配。**自选场景务必传此值**，否则会强制走名称模糊匹配。
@@ -453,6 +459,8 @@ import_transaction_screenshots({
   ]
 })
 ```
+
+同样地，`image_paths` 只可用于用户明确提供的截图文件路径。
 
 返回重点：
 - `type`: `BUY` 或 `SELL`。
@@ -633,9 +641,10 @@ sync_community_returns({
 规则：
 - 社区功能需要 PRO 会员。
 - `get_community_notices` 与 `get_notices` 不同：前者是个人社区通知，后者是系统公告。
-- 授权操作前须向用户确认是否愿意公开持仓数据。
+- 授权、取消授权、关注/取消关注、收益同步调用后会直接生效，不会进入 App 确认页；调用前必须向用户明确确认。
+- 授权操作前须向用户确认是否愿意公开持仓数据，以及是否展示金额、是否匿名。
 - `follow_community_user` 是取反操作：已关注则取消，未关注则添加。
-- `sync_community_returns` 的收益率参数为百分比数值（如 5.2 表示 +5.2%），而非小数。
+- `sync_community_returns` 的收益率参数为百分比数值（如 5.2 表示 +5.2%），而非小数。不要凭空编造收益率；只有当用户明确要求刷新社区收益，且你能从可信数据计算或用户明确提供这些数值时才调用。通常应让 App 自动完成社区收益同步。
 
 ## 8. JCTI 投资人格分析
 
@@ -678,7 +687,7 @@ get_app_versions({"page": 1, "page_size": 5})
 ## 10. 常见降级
 
 - `401`：Token 无效或过期，要求用户重新生成。
-- `403`：权限不足或会员状态不满足，要求用户检查 PRO 状态。
+- `403`：权限不足或会员状态不满足；Agent Token 和多数 MCP 能力需要 PRO，部分行情/JCTI 能力可能要求 VIP 或 PRO。
 - 云端无数据：要求用户打开 App 执行「立即同步」。
 - 行情估算为空：可能是非交易日、盘前或数据源暂不可用，不要当作错误。
 - 截图识别为空：提示用户换清晰截图，或分批上传。

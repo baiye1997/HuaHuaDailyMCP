@@ -4,6 +4,10 @@
 
 交易和导入不会由 Agent 直接写入。Agent 只负责识别、轻确认和发起请求，最终写入必须回到花花日记 App 的现有确认页。
 
+社区授权、取消授权、关注/取消关注、社区收益同步属于直接后端写操作，不走 App 待确认页；Agent 只有在用户明确确认该社区操作后才应调用。
+
+MCP 可读取完整持仓、交易流水、云同步快照和截图内容，可能包含金额、成本、收益率等敏感投资数据。生成 Agent Token 即表示授权所接入的 Agent 在其权限范围内读取这些数据。
+
 ## 前置条件
 
 - **Python 3.10+**
@@ -181,6 +185,8 @@ clawhub install huahua-daily
 - 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
+- 社区写操作会直接生效，不是 App 待确认请求；收益同步不要凭空编造收益率，通常交给 App 自动同步。
+- 截图工具的 image_paths 会读取本机图片文件；只使用用户明确提供的路径，无法确认来源时优先使用 images_base64。
 - 用户完成 JCTI 答题后可调用 analyze_jcti 获取 AI 人格分析。
 - 查询 App 版本信息使用 get_app_version 或 get_app_versions。
 ```
@@ -257,10 +263,10 @@ clawhub install huahua-daily
 - `search_community_users(query)`：搜索用户（UID/昵称）。
 - `get_community_notices(since=0)`：社区定向通知。
 - `get_community_authorization()`：查询社区授权状态。
-- `authorize_community(show_amount, anonymous)`：授权参与喵舍排行。
-- `revoke_community_authorization()`：取消授权，退出排行。
-- `sync_community_returns(weekly_return, monthly_return, total_return, fund_count, top_fund_code?, top_fund_name?)`：同步收益数据到社区。
-- `follow_community_user(target_uid)`：关注/取消关注用户（取反操作）。
+- `authorize_community(show_amount, anonymous)`：授权参与喵舍排行，直接生效，调用前必须确认。
+- `revoke_community_authorization()`：取消授权，退出排行，直接生效，调用前必须确认。
+- `sync_community_returns(weekly_return, monthly_return, total_return, fund_count, top_fund_code?, top_fund_name?)`：同步收益数据到社区，直接生效；仅在用户明确要求且数值可信时调用。
+- `follow_community_user(target_uid)`：关注/取消关注用户（取反操作），直接生效，调用前必须确认。
 
 JCTI 投资人格：
 
@@ -287,13 +293,13 @@ JCTI 投资人格：
 
 云同步快照用于跨设备恢复，包含：
 
-- `funds`：基金、自选、持仓、成本、交易记录、标签、纪律、定投等核心数据。
+- `funds`：基金、自选、持仓、成本、交易记录、标签、纪律、定投，以及恢复前展示所需的最后官方净值基线。
 - `groups` / `watchlistGroups`：分组。
 - `globalTags`：全局标签注册表。
 - `fieldConfigs` / `watchlistFieldConfigs`：字段显示配置。
 - `timestamp` / `version`：客户端导出时间和数据版本。
 
-云同步通常不包含 `ledger`。收益日历账本是派生数据，App 会用交易记录和历史净值重建；本地备份导出会包含 ledger，但导入时也会清空并重建，避免旧账本覆盖新交易状态。
+云同步只保留已删除基金不可重建的归档账本；当前基金的收益日历会用交易记录和历史净值重建。手动本地备份包含并恢复完整 ledger 和基金元数据，可离线恢复。
 
 Agent 如需完整审计，应优先读取 `get_transactions` 和 `get_raw_sync_data`，不要只依赖 `get_summary`。
 
@@ -302,6 +308,10 @@ Agent 如需完整审计，应优先读取 `get_transactions` 和 `get_raw_sync_
 - Agent Token 存储为 SHA256，不保存明文。
 - Token 可设置有效期，可在 App 内撤销。
 - 后端对 AgentToken 使用权限白名单。
+- Agent Token 需要 PRO 会员；过期、撤销或会员状态不满足时会被拒绝。
+- MCP 可读取敏感投资数据，包括持仓金额、交易流水和原始云同步快照；请只授权可信 Agent。
 - 交易类能力只创建待确认请求，不直接写入交易。
 - 截图导入只把识别结果发送到 App 确认页，不直接写入数据。
+- 本地截图路径 `image_paths` 会读取并上传本机图片文件；只使用用户明确提供的路径。
+- 社区授权、取消授权、关注/取消关注、社区收益同步是直接写操作，不经过 App 确认页。
 - MCP 不提供云同步覆盖写入工具。
