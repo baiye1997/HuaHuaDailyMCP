@@ -31,7 +31,7 @@ import base64
 import mimetypes
 import re
 import threading
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 import httpx
@@ -503,7 +503,11 @@ def _ratio_pct(numerator: float, denominator: float) -> Optional[float]:
     if not math.isfinite(numerator) or not math.isfinite(denominator) or denominator <= 0:
         return None
     try:
-        return _r2((numerator / denominator) * 100)
+        value = (Decimal(repr(numerator)) / Decimal(repr(denominator)) * Decimal("100")).quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+        return float(value)
     except Exception:
         return None
 
@@ -676,6 +680,7 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
         today_profit = 0.0
     else:
         today_profit = _calc_change_profit(safe_shares, prev_nav, estimated_change_percent, estimated_nav)
+    day_base_market_value = _r2(safe_shares * prev_nav) if source != "reset" and safe_shares > 0 and prev_nav > 0 else 0.0
 
     _effective_date = est.get("display_date") or fund.get("displayDate") or _beijing_date_string()
     _cash_dividend_today = 0.0
@@ -694,8 +699,6 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     _correction_delta = _calc_correction_delta_total(txs)
     today_profit = _r2(today_profit + _cash_dividend_today)
     total_invested = _r2(_buy_total + _correction_delta)
-    total_return_rate = _ratio_pct(total_profit, total_invested)
-
     return {
         "marketValue": market_value,
         "currentMarketValue": market_value,
@@ -708,9 +711,9 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
         "totalInvested": total_invested,
         "returnRate": holding_return_rate,
         "holdingReturnRate": holding_return_rate,
-        "totalReturnRate": total_return_rate,
         "todayProfit": today_profit,
         "dayProfit": today_profit,
+        "dayBaseMarketValue": day_base_market_value,
         "currentNav": official_nav,
         "lastNav": official_nav if official_nav > 0 else None,
         "valuationAvailable": valuation_available,
@@ -1738,7 +1741,7 @@ async def get_tags() -> dict:
 @mcp.tool()
 async def get_records(include_transactions: bool = False) -> dict:
     """
-    获取用户持仓记录，并自动计算今日收益、累计收益、市值、收益率等字段。
+    获取用户持仓记录，并自动计算今日收益、持有收益、累计收益、市值、持有收益率等字段。
     需要 Agent Token 且账号需开通会员才能使用云端实时同步数据。
 
     数据来自云端实时同步主数据（dataUpdatedAt 字段）。若刚在 App 中刷新了净值或新增了交易，
@@ -1747,12 +1750,12 @@ async def get_records(include_transactions: bool = False) -> dict:
     返回结构：
     - holdings: 有持仓的记录列表（含实时收益计算）
     - watchlist: 观察列记录（无持仓，仅供参考）
-    - summary: 持仓汇总（总市值/今日收益/持有收益/持有收益率/累计收益/收益率/在途金额）
+    - summary: 持仓汇总（总市值/今日收益/持有收益/持有收益率/累计收益/在途金额）
+      - todayProfitRate: 今日/昨日收益率（todayProfit / totalDayBaseMarketValue × 100%，分母为归属日组合期初市值）
+      - totalDayBaseMarketValue: 今日/昨日收益率使用的组合期初市值
       - totalHoldingProfit: 持有收益总额（市值 - 成本，不含落袋/已实现收益）
       - totalHoldingReturnRate: 持有收益率（totalHoldingProfit / totalCost × 100%，仅反映浮动亏盈）
-      - cumulativeProfit: 累计收益（持有收益 + 已实现收益，含落袋）
-      - totalReturnRate: 累计收益率（cumulativeProfit / totalInvested × 100%，含落袋，综合回报率）
-      注意：totalReturnRate ≠ totalHoldingReturnRate，前者含已实现收益，后者仅持仓浮动
+      - cumulativeProfit: 累计收益（持有收益 + 已实现收益，含落袋；不代表用户所有平台/历史交易的完整累计）
     - dataUpdatedAt: 云端实时同步主数据的最后更新时间（UTC），展示给用户让其知晓数据新鲜度
 
     Args:
@@ -1851,16 +1854,18 @@ async def get_records(include_transactions: bool = False) -> dict:
     total_cumulative_profit = 0.0
     total_in_transit = 0.0
     total_invested = 0.0
+    total_day_base_market_value = 0.0
     for f in holdings:
         total_market_value = _r2(total_market_value + f.get("marketValue", 0))
         total_cost = _r2(total_cost + f.get("costTotal", 0))
         total_today_profit = _r2(total_today_profit + f.get("todayProfit", 0))
+        total_day_base_market_value = _r2(total_day_base_market_value + f.get("dayBaseMarketValue", 0))
         total_holding_profit = _r2(total_holding_profit + f.get("holdingProfit", 0))
         total_cumulative_profit = _r2(total_cumulative_profit + f.get("totalProfit", 0))
         total_in_transit = _r2(total_in_transit + f.get("inTransitAmount", 0))
         total_invested = _r2(total_invested + f.get("totalInvested", 0))
-    total_return_rate = _ratio_pct(total_cumulative_profit, total_invested)
     total_holding_return_rate = _ratio_pct(total_holding_profit, total_cost)
+    today_profit_rate = _ratio_pct(total_today_profit, total_day_base_market_value)
 
     return {
         "holdings": holdings,
@@ -1870,11 +1875,12 @@ async def get_records(include_transactions: bool = False) -> dict:
             "totalMarketValue": total_market_value,
             "totalCost": total_cost,
             "todayProfit": total_today_profit,
+            "todayProfitRate": today_profit_rate,
+            "totalDayBaseMarketValue": total_day_base_market_value,
             "totalHoldingProfit": total_holding_profit,
             "totalHoldingReturnRate": total_holding_return_rate,
             "cumulativeProfit": total_cumulative_profit,
             "totalInvested": total_invested,
-            "totalReturnRate": total_return_rate,
             "heldItemCount": len(holdings),
             "totalInTransitAmount": total_in_transit,
             "emptyPortfolioConfirmed": snapshot_summary.get("empty_portfolio_confirmed", False),
@@ -1891,8 +1897,10 @@ async def get_records(include_transactions: bool = False) -> dict:
 @mcp.tool()
 async def get_summary() -> dict:
     """
-    获取持仓总览摘要（总市值、今日收益、累计收益、收益率）。
+    获取持仓总览摘要（总市值、今日收益、今日收益率、持有收益、持有收益率、累计收益）。
     输出比 get_records 更精简（不含每只基金明细），适合快速查询资产概况。
+    今日收益率 todayProfitRate 使用 todayProfit / totalDayBaseMarketValue，
+    即归属日组合期初市值口径，不使用当前总市值。
 
     返回的 dataUpdatedAt 字段表示云端实时同步主数据的更新时间，请将此时间告知用户，
     让其了解数据是否为最新（若时间较旧，提示用户在 App 确认实时同步已完成）。
