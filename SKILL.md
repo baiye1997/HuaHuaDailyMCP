@@ -710,27 +710,13 @@ revoke_community_authorization()
 follow_community_user({"target_uid": "12345678"})
 ```
 
-收益同步：
-
-```json
-// 手动同步收益到社区（通常由 App 自动完成，Agent 仅在用户明确要求时调用）
-sync_community_returns({
-  "weekly_return": 5.2,
-  "monthly_return": 12.8,
-  "total_return": 35.6,
-  "fund_count": 8,
-  "top_fund_code": "110022",
-  "top_fund_name": "易方达消费行业"
-})
-```
-
 规则：
 - 社区功能需要 PRO 会员。
 - `get_community_notices` 与 `get_notices` 不同：前者是个人社区通知，后者是系统公告。
-- 授权、取消授权、关注/取消关注、收益同步调用后会直接生效，不会进入 App 确认页；调用前必须向用户明确确认。
+- 授权、取消授权、关注/取消关注调用后会直接生效，不会进入 App 确认页；调用前必须向用户明确确认。
 - 授权操作前须向用户确认是否愿意公开持仓数据，以及是否展示金额、是否匿名。
 - `follow_community_user` 是取反操作：已关注则取消，未关注则添加。
-- `sync_community_returns` 的收益率参数为百分比数值（如 5.2 表示 +5.2%），而非小数。不要凭空编造收益率；只有当用户明确要求刷新社区收益，且你能从可信数据计算或用户明确提供这些数值时才调用。通常应让 App 自动完成社区收益同步。
+- 社区排名收益由服务端基于实时云端组合数据核算，MCP 不提供手动写入收益率工具。
 
 ## 8. JCTI 投资人格分析
 

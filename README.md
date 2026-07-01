@@ -284,7 +284,6 @@ clawhub install huahua-daily
 - `get_community_authorization()`：查询社区授权状态。
 - `authorize_community(show_amount, anonymous)`：授权参与喵舍排行，直接生效，调用前必须确认。
 - `revoke_community_authorization()`：取消授权，退出排行，直接生效，调用前必须确认。
-- `sync_community_returns(weekly_return, monthly_return, total_return, fund_count, top_fund_code?, top_fund_name?)`：同步收益数据到社区，直接生效；仅在用户明确要求且数值可信时调用。
 - `follow_community_user(target_uid)`：关注/取消关注用户（取反操作），直接生效，调用前必须确认。
 
 JCTI 投资人格：

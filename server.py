@@ -900,7 +900,6 @@ async def get_tool_manifest() -> dict:
                 "get_community_authorization",
                 "authorize_community",
                 "revoke_community_authorization",
-                "sync_community_returns",
                 "follow_community_user",
             ],
             "trade": ["request_transaction", "get_agent_requests", "update_agent_request"],
@@ -2369,38 +2368,6 @@ async def revoke_community_authorization() -> dict:
     """
     _require_token()
     return await _delete("/api/community/authorize")
-
-
-@mcp.tool()
-async def sync_community_returns(
-    weekly_return: float,
-    monthly_return: float,
-    total_return: float,
-    fund_count: int,
-    top_fund_code: str = "",
-    top_fund_name: str = "",
-) -> dict:
-    """
-    将用户收益率数据同步到喵舍社区，用于排行榜排名。
-    通常由 App 自动调用；Agent 可在用户明确要求刷新排名时手动触发。
-
-    Args:
-        weekly_return: 近一周收益率（百分比数值，如 5.2 表示 +5.2%）
-        monthly_return: 近一月收益率
-        total_return: 累计总收益率
-        fund_count: 持仓基金数量
-        top_fund_code: 第一重仓基金代码（可选）
-        top_fund_name: 第一重仓基金名称（可选）
-    """
-    _require_token()
-    return await _post("/api/community/sync-returns", {
-        "weekly_return": weekly_return,
-        "monthly_return": monthly_return,
-        "total_return": total_return,
-        "fund_count": fund_count,
-        "top_fund_code": top_fund_code,
-        "top_fund_name": top_fund_name,
-    })
 
 
 @mcp.tool()
