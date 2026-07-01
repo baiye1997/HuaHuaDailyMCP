@@ -656,9 +656,27 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
     fallback_cost_total = _r2(safe_shares * cost_per_share) if safe_shares > 0 and cost_per_share > 0 else 0.0
     stored_cost_total = _to_float(_stored_cost_total, float("nan"))
     cost_total = stored_cost_total if safe_shares > 0 and math.isfinite(stored_cost_total) and stored_cost_total >= 0 else fallback_cost_total
+
+    txs = fund.get("transactions") or []
+    _buy_total = 0.0
+    _total_sold = 0.0
+    for tx in txs:
+        if tx.get("status", "") != "CONFIRMED":
+            continue
+        tx_type = tx.get("type", "")
+        if tx_type == "BUY":
+            _buy_total = _r2(_buy_total + _resolve_amount(tx))
+        elif tx_type == "SELL":
+            _total_sold = _r2(_total_sold + _resolve_amount(tx))
+    _correction_delta = _calc_correction_delta_total(txs)
+    total_invested = _r2(_buy_total + _correction_delta)
+
     market_value = _r2(safe_shares * official_nav) if valuation_available else 0.0
     holding_profit = _r2(market_value - cost_total) if valuation_available else 0.0
-    realized = _to_float(fund.get("realizedProfit"), 0.0)
+    sold_cost = _r2(max(0.0, total_invested - cost_total)) if total_invested > 0 else 0.0
+    realized_fallback = _r2(_total_sold - sold_cost) if total_invested > 0 else 0.0
+    raw_realized = _to_float(fund.get("realizedProfit"), float("nan"))
+    realized = raw_realized if math.isfinite(raw_realized) else realized_fallback
     total_profit = _r2(holding_profit + realized)
     holding_return_rate = _ratio_pct(holding_profit, cost_total) if valuation_available else None
 
@@ -684,21 +702,15 @@ def _calc_fund_stats(fund: dict, est: Optional[dict] = None) -> dict:
 
     _effective_date = est.get("display_date") or fund.get("displayDate") or _beijing_date_string()
     _cash_dividend_today = 0.0
-    _buy_total = 0.0
-    txs = fund.get("transactions") or []
     for tx in txs:
         tx_status = tx.get("status", "")
         if tx_status != "CONFIRMED":
             continue
         tx_type = tx.get("type", "")
-        if tx_type == "BUY":
-            _buy_total = _r2(_buy_total + _resolve_amount(tx))
-        elif (tx_type == "DIVIDEND_CASH"
+        if (tx_type == "DIVIDEND_CASH"
               and (tx.get("confirmDate") or tx.get("date")) == _effective_date):
             _cash_dividend_today = _r2(_cash_dividend_today + _to_float(tx.get("amount")))
-    _correction_delta = _calc_correction_delta_total(txs)
     today_profit = _r2(today_profit + _cash_dividend_today)
-    total_invested = _r2(_buy_total + _correction_delta)
     return {
         "marketValue": market_value,
         "currentMarketValue": market_value,
