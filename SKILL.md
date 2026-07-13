@@ -1,6 +1,6 @@
 ---
 name: huahua-daily
-description: Use HuahuaDaily MCP to query portfolio, transactions, market data, screenshot imports, and send App-confirmed trade/import requests.
+description: Use HuahuaDaily MCP for authorized portfolio and transaction queries, fund and market data, strategy backtests and quant snapshots, community actions, screenshot recognition, and App-confirmed trade or import requests. Trigger when users ask about their HuahuaDaily holdings or cloud sync, request fund or market analysis through HuahuaDaily, run or review portfolio backtests, save or review strategy snapshots, use HuahuaDaily community features, or send transactions/imports for App confirmation.
 ---
 
 # 花花日记助手（HuahuaDaily）
@@ -18,6 +18,10 @@ Agent 不直接写入交易、不直接导入持仓、不覆盖云同步。所�
 社区授权、取消授权、关注/取消关注、社区收益同步是直接后端写操作，不走 App 待确认页。只有用户明确确认该社区操作时才调用；不要把它们描述为“已发送到 App 等待确认”。
 
 MCP 可读取完整持仓、交易流水、原始云端实时同步主数据和截图内容，可能包含金额、成本、收益率等敏感投资数据。回答时不要主动暴露超过用户问题所需的明细。
+
+策略实验室的组合回放和历史试算必须调用服务端工具，不要在 Agent 内复制交易排序、收益或回撤算法。`save_quant_snapshot` 是不可变的“当时判断”档案：真实持仓和组合版本由服务端捕获，只保存市场状态、特征、逐基金观察、风险否决和数据质量，不创建虚拟账户、不计算模拟收益、不保存建议金额，也不会下单。
+
+业务请求仅通过 MCP 注册工具执行。`server.py` 是兼容入口，`huahua_mcp_runtime` 是内部实现包；内部 Python 模块不构成公共调用面。
 
 ## 2. 会话启动
 
@@ -64,10 +68,12 @@ get_summary()
 - `todayProfit`：今日收益。
 - `todayProfitRate`：今日/昨日收益率，口径为 `todayProfit / totalDayBaseMarketValue × 100%`，不要用当前总市值重算。
 - `totalDayBaseMarketValue`：`todayProfitRate` 使用的归属日组合期初市值。
+- `displayedDayCompleteness`：组合当日收益完整度。若 `complete=false` 或 `pendingAttributionCount>0`，说明至少一只 QDII/T+N 最新官方净值尚无可靠 G 日；现有 `todayProfit` / `todayProfitRate` 仅覆盖可归属基金，不得表述为完整组合当日收益。
 - `totalHoldingProfit`：持有收益。
 - `totalHoldingReturnRate`：持有收益率。
 - `cumulativeProfit`：累计收益；这是本 App 已记录交易推导的累计，仅在用户明确询问历史累计或该字段时使用。
 - `dataUpdatedAt`：云端实时同步主数据时间。
+- `strategyPreferences.maxDrawdownLimitPct`：用户在策略实验室设置的组合回撤阈值百分数；`0` 表示未启用。不得自行假定为 10%。
 
 回答时必须说明 `dataUpdatedAt`。如果时间明显旧，提醒用户在 App 开启实时同步或点击「从云端同步恢复 / 手动同步」相关入口。
 
@@ -97,6 +103,22 @@ get_records({"include_transactions": false})
 ```json
 get_transactions({"code": "", "include_pending": true})
 ```
+
+需要费用、确认日、净值日和分页游标齐全的量化账本时，优先调用：
+
+```json
+get_transaction_ledger({"start_date": "2026-01-01", "end_date": "2026-12-31", "limit": 100})
+```
+
+账本的日期筛选和排序统一使用 `effectiveDate = confirmDate || tradeDate`；`tradeDate` 与 `confirmDate` 仍会同时返回用于审计。不要按下单日自行重排确认后的持仓。
+
+真实组合历史单位净值与回撤使用：
+
+```json
+get_portfolio_nav_history({"start_date": "2025-01-01", "end_date": "2026-01-01", "benchmark_code": "000300"})
+```
+
+不要用 `get_transactions` 返回值自行另算一套组合净值。
 
 或：
 
@@ -164,6 +186,52 @@ get_purchase_limit_watchlist()
 ```
 
 再按需对返回的代码调用 `get_batch_fund_fees(codes)` 或 `get_fund_fees(code)` 查看申购状态、QDII/限大额日累计限购金额和确认天数。旧版本或尚未同步过该功能的云端主数据可能没有 `purchaseLimitWatchItems`，此时 `has_customized=false`。
+
+### 3.6 策略实验室
+
+需要多只基金官方净值时，使用 `get_batch_fund_nav_history`，不要并发循环调用 `get_item_history`。逐基金检查 `coverageStart`、`coverageEnd`、`baselineDate` 和 `complete`；只有请求区间的期初基线与结束边界都覆盖时，`complete` 才为 true。
+
+历史回测使用 `run_portfolio_backtest`。`strategy_type=target_rebalance` 按 `none/daily/weekly/monthly/quarterly` 频率恢复目标权重；`strategy_type=threshold_reentry` 按止盈、止损及反向波动再次买入阈值运行。只能提交基金代码、目标权重、日期、初始资金、费用和这些白名单参数；不得提交动态代码、URL、文件路径或表达式。如果要重试同一次运行，复用同一 `client_run_id`。
+
+运行成功后保留返回的 `run_id`。需要读取已保存回测、审计完整交易或继续分页时调用：
+
+```json
+get_portfolio_backtest({
+  "run_id": 123,
+  "trade_offset": 0,
+  "trade_limit": 100,
+  "max_series_points": 300
+})
+```
+
+`trade_limit` 最大 200，`max_series_points` 最大 500。完整审计应持续使用 `nextTradeOffset` 分页，直到该字段为空。已保存的服务端交易序列是回测审计的权威数据源。
+
+需要证明“某日、某版本、基于当时数据得出了什么判断”时调用 `save_quant_snapshot`：
+
+```json
+save_quant_snapshot({
+  "snapshot_key": "strategy-a:<北京时间今天>:close:v1",
+  "snapshot_date": "<北京时间今天 YYYY-MM-DD>",
+  "strategy_id": "strategy-a",
+  "strategy_version": "1.0.0",
+  "group_id": "<可选的资产分组 ID>",
+  "data_cutoff_at": "<不晚于当前写入时间的 UTC ISO 时间>",
+  "market_mode": {"regime": "range"},
+  "features": {"momentumWindow": 20},
+  "risk": {"portfolioAlert": false},
+  "data_quality": {"complete": true},
+  "fund_signals": [{
+    "code": "000001",
+    "observation": "HOLD",
+    "triggers": ["20日动量仍为正"],
+    "riskVeto": {"blocked": false, "reasons": []}
+  }]
+})
+```
+
+只分析某个资产分组时，组合查询、历史试算和 `save_quant_snapshot` 必须使用同一个 `group_id`；未传表示全部持仓，旧快照也按全部持仓解释。
+
+`snapshot_key` 是幂等键，同一键且内容相同才返回原记录，内容不同会返回冲突。首版只允许写入北京时间当天快照，`data_cutoff_at` 不能晚于服务端写入时间，也必须属于快照当天。服务端会补入真实持仓、组合版本、写入时间和 SHA-256 `payloadHash`。每条逐基金观察必须明确 `observation`、`triggers` 和 `riskVeto.blocked`；任何层级出现建议金额、建议份额或同义建议文本都会被拒绝。读取旧判断用 `get_quant_snapshots` 分页获取摘要，再传 `snapshot_id` 读取完整内容。后续方向统一调用 `get_quant_snapshot_review`，按 1、7、20、60 个收益日读取后端权威验证结果；不得自行复制收益或 G 日归属算法，不回填或覆盖原快照，也不得把 QDII 涨跌提前。需要复盘真实加减仓时调用 `get_portfolio_trade_review`，不要从交易账本自行推算 T1/T7/T20/T60 表现。
 
 ## 4. 查询基金和市场
 

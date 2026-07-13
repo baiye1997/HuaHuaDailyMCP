@@ -1,0 +1,91 @@
+"""Public MCP tool ordering and registration."""
+
+from .tools import community, fund, import_tools, market, portfolio, portfolio_actions, quant, system
+
+
+TOOL_MODULES = (system, fund, market, portfolio, portfolio_actions, import_tools, community, quant)
+TOOL_NAMES = (
+    "set_token",
+    "get_tool_manifest",
+    "get_current_user",
+    "search_item",
+    "get_item_detail",
+    "get_item_estimate",
+    "get_fund_source_previews",
+    "get_daily_rank",
+    "get_item_history",
+    "get_item_dividends",
+    "get_fund_timeline",
+    "get_fund_fees",
+    "get_batch_fund_fees",
+    "get_fund_period_rank",
+    "get_fund_profile",
+    "get_batch_fund_profiles",
+    "get_batch_fund_period_ranks",
+    "get_status",
+    "get_overview",
+    "get_sector_wind",
+    "get_yesterday_rank",
+    "get_fund_flow",
+    "get_indices",
+    "get_holder_ranking",
+    "get_night_estimate",
+    "get_night_watchlist",
+    "get_purchase_limit_watchlist",
+    "get_benchmark_history",
+    "get_instrument_catalog",
+    "get_instrument_quotes",
+    "get_instrument_timeline",
+    "get_instrument_history",
+    "calculate_trading_dates",
+    "get_next_trading_day",
+    "get_sync_meta",
+    "get_raw_sync_data",
+    "get_transactions",
+    "get_groups",
+    "get_tags",
+    "get_records",
+    "get_summary",
+    "submit_personal_strategy_report",
+    "request_transaction",
+    "get_agent_requests",
+    "update_agent_request",
+    "import_holding_screenshots",
+    "import_transaction_screenshots",
+    "request_import_review",
+    "get_danmaku",
+    "send_danmaku",
+    "get_notices",
+    "get_community_ranking",
+    "get_community_my_rank",
+    "get_community_user",
+    "get_community_stats",
+    "get_community_following",
+    "search_community_users",
+    "get_community_notices",
+    "get_community_authorization",
+    "authorize_community",
+    "revoke_community_authorization",
+    "follow_community_user",
+    "analyze_jcti",
+    "get_transaction_ledger",
+    "get_batch_fund_nav_history",
+    "get_portfolio_nav_history",
+    "get_portfolio_trade_review",
+    "run_portfolio_backtest",
+    "get_portfolio_backtest",
+    "save_quant_snapshot",
+    "get_quant_snapshots",
+    "get_quant_snapshot_review",
+    "get_app_version",
+    "get_app_versions",
+)
+
+
+def register_tools(mcp, runtime_globals: dict) -> None:
+    for name in TOOL_NAMES:
+        runtime_globals[name] = next(getattr(module, name) for module in TOOL_MODULES if hasattr(module, name))
+    for module in TOOL_MODULES:
+        module.bind(runtime_globals)
+    for name in TOOL_NAMES:
+        mcp.tool()(runtime_globals[name])

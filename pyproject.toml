@@ -17,3 +17,7 @@ huahua-daily = "server:main"
 
 [tool.setuptools]
 py-modules = ["server"]
+packages = [
+    "huahua_mcp_runtime",
+    "huahua_mcp_runtime.tools",
+]
