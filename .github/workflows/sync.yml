@@ -29,13 +29,18 @@ jobs:
 
       - name: Sync mcp-server files
         run: |
-          # 同步 mcp-server 目录下的所有文件到根目录
-          cp /tmp/source/mcp-server/* .
+          # 镜像完整运行时目录，并保留公开仓库自己的 Git 元数据与同步 workflow。
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.gitignore' \
+            /tmp/source/mcp-server/ ./
 
       - name: Check for changes
         id: check_changes
         run: |
-          if git diff --quiet; then
+          # git diff 不包含新增的未跟踪文件；运行时拆包后必须使用 status 检测。
+          if [ -z "$(git status --porcelain)" ]; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
@@ -44,6 +49,6 @@ jobs:
       - name: Commit and push
         if: steps.check_changes.outputs.has_changes == 'true'
         run: |
-          git add .
+          git add -A
           git commit -m "chore: sync from baiye-fund/main branch"
           git push
