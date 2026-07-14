@@ -32,6 +32,8 @@ TOOL_NAMES = (
     "get_night_estimate",
     "get_night_watchlist",
     "get_purchase_limit_watchlist",
+    "get_auto_invest_plans",
+    "get_fund_disciplines",
     "get_benchmark_history",
     "get_instrument_catalog",
     "get_instrument_quotes",

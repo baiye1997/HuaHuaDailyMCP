@@ -88,8 +88,8 @@ get_records({"include_transactions": false})
 ```
 
 返回重点：
-- `holdings`：有持仓的基金。
-- `watchlist`：自选或清仓观察项。
+- `holdings`：有持仓的基金；已配置定投时含 `autoInvestPlans`。
+- `watchlist`：App 中可见的自选或清仓观察项；不包含已送养隐藏项，同代码的显式自选优先；已配置定投时含 `autoInvestPlans`。
 - `groups`：分组。
 - `summary`：汇总。
 - `dataUpdatedAt`：云端实时同步主数据时间。
@@ -97,6 +97,22 @@ get_records({"include_transactions": false})
 云端实时同步主数据会保存最后一次官方净值作为恢复基线，但不会保存盘中估值等高频行情。`get_records` 会主动拉取最新行情用于今日收益，但持仓市值仍以主数据中的官方 `lastNav` 为准；若需要盘中估算口径，再调用 `get_item_estimate` 获取 `estimatedNav`。
 
 当前 App 口径：持仓市值和持有收益只按云端主数据中的官方 `lastNav` 计价；盘中估算只用于 `dayProfit`（今日收益），不会回填持仓市值。`cumulativeProfit` 是本 App 已记录交易推导的累计收益，不代表用户所有平台/历史清仓买卖的完整累计收益。`get_records` 会读取云端主数据里的 `userPreferences.fundDataSourceMode` 和基金级 `dataSourceMode`，自动按用户选择的行情源请求估值。
+
+用户专门询问定投计划时，调用只读工具：
+
+```json
+get_auto_invest_plans({"code": ""})
+```
+
+可传 6 位基金代码筛选。返回兼容旧版单定投和新版多定投；该工具不会创建、修改、暂停或删除计划。
+
+用户询问止盈、止损或基金纪律时，调用只读工具：
+
+```json
+get_fund_disciplines({"code": ""})
+```
+
+返回条件类型、阈值、备注、触发和已知悉状态；不得把 `triggered=true` 描述成 Agent 已执行交易。该工具不会新增、修改、触发或删除纪律。
 
 如果用户要求交易流水、成本来源、审计收益，再调用：
 

@@ -38,6 +38,21 @@ def bind(runtime_globals: dict) -> None:
     globals()["_runtime_get_records"] = RuntimeCallable(runtime_globals, "get_records")
 
 
+def _auto_invest_plans(fund: dict) -> list[dict]:
+    configs = fund.get("autoInvestConfigs")
+    if not isinstance(configs, list) or not configs:
+        legacy = fund.get("autoInvestConfig")
+        configs = [legacy] if isinstance(legacy, dict) else []
+    return [dict(config) for config in configs if isinstance(config, dict)]
+
+
+def _fund_disciplines(fund: dict) -> list[dict]:
+    disciplines = fund.get("disciplines")
+    if not isinstance(disciplines, list):
+        return []
+    return [dict(discipline) for discipline in disciplines if isinstance(discipline, dict)]
+
+
 async def get_night_watchlist() -> dict:
     """
     获取用户在 App「夜盘估值」页面手动添加的基金代码列表。
@@ -109,6 +124,89 @@ async def get_purchase_limit_watchlist() -> dict:
         "codes": [item["code"] for item in items],
         "count": len(items),
         "has_customized": has_customized,
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+async def get_auto_invest_plans(code: str = "") -> dict:
+    """
+    读取用户在 App 中设置的定投计划。只读，不会创建、修改、暂停或删除计划。
+
+    同时兼容旧版单计划 autoInvestConfig 与新版多计划 autoInvestConfigs，
+    并统一返回每只基金的 plans 数组。
+
+    Args:
+        code: 可选，6 位基金代码；留空返回全部已配置定投的基金。
+
+    Returns:
+        dict 包含 items、fundCount、planCount、enabledPlanCount 和 dataUpdatedAt。
+    """
+    _require_token()
+    validated_code = _validate_fund_code(code) if code else ""
+    portfolio = await _download_portfolio()
+    items = []
+    plan_count = 0
+    enabled_plan_count = 0
+    for fund in portfolio.get("funds", []):
+        fund_code = str(fund.get("code") or "").strip()
+        if validated_code and fund_code != validated_code:
+            continue
+        plans = _auto_invest_plans(fund)
+        if not plans:
+            continue
+        plan_count += len(plans)
+        enabled_plan_count += sum(1 for plan in plans if plan.get("enabled") is True)
+        items.append({
+            "code": fund_code,
+            "name": fund.get("name", ""),
+            "groupId": fund.get("groupId", ""),
+            "plans": plans,
+        })
+    return {
+        "items": items,
+        "fundCount": len(items),
+        "planCount": plan_count,
+        "enabledPlanCount": enabled_plan_count,
+        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+    }
+
+
+async def get_fund_disciplines(code: str = "") -> dict:
+    """
+    读取用户在 App 中为基金设置的止盈止损纪律。只读，不会新增、修改、触发或删除纪律。
+
+    Args:
+        code: 可选，6 位基金代码；留空返回全部已配置纪律的基金。
+
+    Returns:
+        dict 包含 items、fundCount、disciplineCount、triggeredCount 和 dataUpdatedAt。
+    """
+    _require_token()
+    validated_code = _validate_fund_code(code) if code else ""
+    portfolio = await _download_portfolio()
+    items = []
+    discipline_count = 0
+    triggered_count = 0
+    for fund in portfolio.get("funds", []):
+        fund_code = str(fund.get("code") or "").strip()
+        if validated_code and fund_code != validated_code:
+            continue
+        disciplines = _fund_disciplines(fund)
+        if not disciplines:
+            continue
+        discipline_count += len(disciplines)
+        triggered_count += sum(1 for discipline in disciplines if discipline.get("triggered") is True)
+        items.append({
+            "code": fund_code,
+            "name": fund.get("name", ""),
+            "groupId": fund.get("groupId", ""),
+            "disciplines": disciplines,
+        })
+    return {
+        "items": items,
+        "fundCount": len(items),
+        "disciplineCount": discipline_count,
+        "triggeredCount": triggered_count,
         "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
@@ -247,8 +345,8 @@ async def get_records(include_transactions: bool = False) -> dict:
     请先确认 App 实时同步已完成后再查询，以获取最新数据。
 
     返回结构：
-    - holdings: 有持仓的记录列表（含实时收益计算）
-    - watchlist: 观察列记录（无持仓，仅供参考）
+    - holdings: 有持仓的记录列表（含实时收益计算、autoInvestPlans 和 disciplines）
+    - watchlist: App 中可见的观察列记录（排除已送养隐藏项；有配置时包含 autoInvestPlans 和 disciplines）
     - summary: 持仓汇总（总市值/今日收益/持有收益/持有收益率/累计收益/在途金额）
       - todayProfitRate: 今日/昨日收益率（todayProfit / totalDayBaseMarketValue × 100%，分母为归属日组合期初市值）
       - totalDayBaseMarketValue: 今日/昨日收益率使用的组合期初市值
@@ -277,8 +375,20 @@ async def get_records(include_transactions: bool = False) -> dict:
     if max_drawdown_limit_pct != 0 and not 5 <= max_drawdown_limit_pct <= 30:
         max_drawdown_limit_pct = 10.0
 
-    # 2. 找出有持仓的项目编号
-    held_codes = [f["code"] for f in funds if (f.get("holdingShares") or 0) > 0]
+    # 2. 找出有持仓的项目编号。显式自选记录不得误归入持仓。
+    held_codes = [
+        f["code"]
+        for f in funds
+        if f.get("isWatchlist") is not True and _to_float(f.get("holdingShares")) > 0
+    ]
+
+    # 与 App getWatchlistFundsByGroup 的可见性语义一致：如果同代码已有显式
+    # 自选记录，不再把清仓持仓记录重复展示为自选。
+    explicit_watchlist_codes = {
+        str(fund.get("code") or "").strip()
+        for fund in funds
+        if fund.get("isWatchlist") is True
+    }
 
     # 3. 并行批量获取今日估算数值（共享 60s 缓存）
     estimate_map: dict = {}
@@ -304,6 +414,18 @@ async def get_records(include_transactions: bool = False) -> dict:
 
     for fund in funds:
         code = fund.get("code", "")
+        normalized_code = str(code or "").strip()
+        holding_shares = _to_float(fund.get("holdingShares"))
+        is_explicit_watchlist = fund.get("isWatchlist") is True
+        is_holding = not is_explicit_watchlist and holding_shares > 0
+        is_visible_watchlist = is_explicit_watchlist or (
+            holding_shares == 0
+            and normalized_code not in explicit_watchlist_codes
+            and fund.get("clearedHideFromWatchlist") is not True
+        )
+        if not is_holding and not is_visible_watchlist:
+            continue
+
         est = estimate_map.get(code, {})
         stats = _calc_fund_stats(fund, est)
         txs = fund.get("transactions") or []
@@ -317,6 +439,12 @@ async def get_records(include_transactions: bool = False) -> dict:
             "tags": fund.get("tags", []),
             **stats,
         }
+        auto_invest_plans = _auto_invest_plans(fund)
+        if auto_invest_plans:
+            enriched["autoInvestPlans"] = auto_invest_plans
+        disciplines = _fund_disciplines(fund)
+        if disciplines:
+            enriched["disciplines"] = disciplines
         if include_transactions:
             enriched["transactions"] = txs
 
@@ -335,11 +463,11 @@ async def get_records(include_transactions: bool = False) -> dict:
         if pending_buy_txs:
             enriched["pendingBuyTransactions"] = pending_buy_txs
 
-        if (fund.get("holdingShares") or 0) > 0:
+        if is_holding:
             holdings.append(enriched)
         else:
             # 观察列仅包含基础信息和行情。
-            watchlist.append({
+            watchlist_item = {
                 "code": code,
                 "name": fund.get("name", ""),
                 "type": fund.get("type", ""),
@@ -347,7 +475,12 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "estimatedNav": stats.get("estimatedNav"),
                 "estimatedChangePercent": stats.get("estimatedChangePercent"),
                 **({"transactions": txs} if include_transactions else {}),
-            })
+            }
+            if auto_invest_plans:
+                watchlist_item["autoInvestPlans"] = auto_invest_plans
+            if disciplines:
+                watchlist_item["disciplines"] = disciplines
+            watchlist.append(watchlist_item)
 
     # 5. 汇总统计（只统计持仓项目）
     # 使用迭代累加而非 sum-then-round，精确对齐前端 analytics.ts 的逐步 r2 模式：

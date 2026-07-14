@@ -25,6 +25,8 @@ def build_tool_manifest(official_api: str) -> dict:
                 "get_tags",
                 "get_night_watchlist",
                 "get_purchase_limit_watchlist",
+                "get_auto_invest_plans",
+                "get_fund_disciplines",
                 "get_transaction_ledger",
                 "get_portfolio_nav_history",
                 "get_portfolio_trade_review",

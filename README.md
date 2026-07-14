@@ -117,7 +117,7 @@ mcp-server/
     ├── manifest.py              # 工具 manifest
     ├── portfolio_adapter.py     # 云端组合适配
     ├── portfolio_math.py        # 组合计算兼容函数
-    ├── tool_registry.py         # 74 个工具的固定顺序与注册
+    ├── tool_registry.py         # 76 个工具的固定顺序与注册
     ├── validation.py            # 输入校验
     └── tools/                   # fund/market/portfolio/community/quant 等领域工具
 ```
@@ -138,7 +138,7 @@ npm run backend:lint
   backend/tests/test_mcp_portfolio_adapter.py
 ```
 
-MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 74 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
+MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 76 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
 
 ## 各 Agent 配置示例
 
@@ -262,13 +262,15 @@ clawhub install huahua-daily
 
 - `get_sync_meta()`：读取云端实时同步主数据更新时间、etag、大小，并返回最新云端历史快照摘要。
 - `get_raw_sync_data(include_json_text=false)`：读取解析后的完整云端实时同步主数据，优先结构化组合接口。
-- `get_records(include_transactions=false)`：读取持仓、自选、今日估算收益和汇总；会自动使用云端主数据里的全局/单基金行情源偏好。
+- `get_records(include_transactions=false)`：读取持仓、App 中可见的自选、今日估算收益和汇总；不返回已送养隐藏项，同代码的显式自选优先；会自动使用云端主数据里的全局/单基金行情源偏好，并在已配置时返回 `autoInvestPlans`。
 - `get_summary()`：读取资产摘要。
 - `get_transactions(code="", include_pending=true)`：读取交易流水。
 - `get_transaction_ledger(start_date="", end_date="", codes?, transaction_types?, statuses?, group_id="", cursor="", limit=100, order="desc")`：读取服务端完整交易账本，含金额、份额、费用、净值日和确认日；可按持仓分组筛选；筛选与排序按 `effectiveDate = confirmDate || tradeDate`；永久删除基金不再出现。
 - `get_groups()`：读取持仓分组和自选分组。
 - `get_tags()`：读取全局标签和基金标签。
 - `get_purchase_limit_watchlist()`：读取 App 限购观察列表（来自云端实时同步主数据）。
+- `get_auto_invest_plans(code="")`：只读查询 App 定投计划，兼容旧版单计划和新版多计划；可按基金代码筛选，不提供任何写入能力。
+- `get_fund_disciplines(code="")`：只读查询 App 中设置的基金止盈止损纪律及触发状态；可按基金代码筛选，不提供任何写入能力。
 
 策略实验室：
 
