@@ -6,7 +6,9 @@ import math
 import os  # noqa: F401
 import re  # noqa: F401
 import time  # noqa: F401
-from typing import Optional  # noqa: F401
+from typing import Literal, Optional  # noqa: F401
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .binding import bind_runtime
 
@@ -24,6 +26,24 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
+
+
+class QuantSnapshotRiskVeto(BaseModel):
+    """Risk veto contract exposed in the MCP tool schema."""
+
+    model_config = ConfigDict(extra="allow")
+    blocked: bool
+    reasons: list[str] = Field(default_factory=list)
+
+
+class QuantSnapshotFundSignal(BaseModel):
+    """Per-fund observation contract exposed in the MCP tool schema."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    code: str
+    observation: Literal["ADD", "HOLD", "REDUCE", "WATCH", "EXIT"]
+    triggers: list[str]
+    risk_veto: QuantSnapshotRiskVeto = Field(alias="riskVeto")
 
 
 async def get_transaction_ledger(
@@ -245,17 +265,21 @@ async def save_quant_snapshot(
     strategy_id: str,
     strategy_version: str = "",
     data_cutoff_at: str = "",
-    fund_signals: Optional[list[dict]] = None,
+    fund_signals: Optional[list[QuantSnapshotFundSignal]] = None,
     market_mode: Optional[dict] = None,
     features: Optional[dict] = None,
     risk: Optional[dict] = None,
     data_quality: Optional[dict] = None,
     group_id: str = "",
 ) -> dict:
-    """幂等归档当天策略观察；不保存建议金额，不创建虚拟账户，也不会交易。"""
+    """幂等归档当天策略观察；每条观察需要 code、observation、triggers 和 riskVeto；不保存建议金额，不创建虚拟账户，也不会交易。"""
     _require_token()
     if len(str(snapshot_key)) > 160 or len(str(strategy_id)) > 120 or len(str(strategy_version)) > 80:
         raise ValueError("snapshot_key、strategy_id 或 strategy_version 超出长度限制")
+    signals = [
+        signal.model_dump(by_alias=True) if isinstance(signal, BaseModel) else signal
+        for signal in (fund_signals or [])
+    ]
     body = {
         "snapshot_key": str(snapshot_key),
         "snapshot_date": _validate_date(snapshot_date),
@@ -263,7 +287,7 @@ async def save_quant_snapshot(
         "strategy_version": str(strategy_version) or None,
         "data_cutoff_at": _validate_data_cutoff(data_cutoff_at),
         "group_id": str(group_id).strip() or None,
-        "signals": fund_signals or [],
+        "signals": signals,
         "market_mode": market_mode or {},
         "features": features or {},
         "risk": risk or {},

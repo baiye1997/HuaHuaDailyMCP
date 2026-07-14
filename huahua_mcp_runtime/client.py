@@ -80,11 +80,34 @@ def _raise_auth_error(response: httpx.Response) -> None:
         raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
 
 
+def _safe_response_detail(response: httpx.Response) -> str:
+    """Return an intentional API validation message without leaking arbitrary bodies."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if not isinstance(detail, str):
+        return ""
+    return " ".join(detail.split())[:500]
+
+
 def _translate_transport_error(error: Exception) -> None:
     if isinstance(error, httpx.TimeoutException):
         raise RuntimeError("请求超时，请稍后重试。") from error
     if isinstance(error, httpx.HTTPStatusError):
-        raise RuntimeError(f"服务器返回错误 {error.response.status_code}，请稍后重试。") from error
+        status_code = error.response.status_code
+        request = error.response.request
+        is_quant_snapshot_write = (
+            request.method == "POST"
+            and request.url.path == "/api/quant/snapshots"
+        )
+        detail = _safe_response_detail(error.response) if (
+            is_quant_snapshot_write and status_code in {400, 409, 413, 422}
+        ) else ""
+        if detail:
+            raise RuntimeError(f"服务器返回错误 {status_code}：{detail}") from error
+        raise RuntimeError(f"服务器返回错误 {status_code}，请稍后重试。") from error
     raise error
 
 
