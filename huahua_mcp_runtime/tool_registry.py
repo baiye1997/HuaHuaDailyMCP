@@ -74,6 +74,7 @@ TOOL_NAMES = (
     "get_batch_fund_nav_history",
     "get_portfolio_nav_history",
     "get_portfolio_trade_review",
+    "get_quant_strategy_context",
     "run_portfolio_backtest",
     "get_portfolio_backtest",
     "save_quant_snapshot",

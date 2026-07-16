@@ -132,6 +132,32 @@ async def get_portfolio_trade_review(
     return await _get("/api/portfolio/trade-review", params={key: value for key, value in params.items() if value})
 
 
+async def get_quant_strategy_context(
+    as_of_date: str = "",
+    group_id: str = "",
+    mode: Literal["live", "historical"] = "live",
+    history_window: str = "1y",
+) -> dict:
+    """一次获取紧凑、真实、可审计的量化输入；不生成评分、信号、金额或交易建议。"""
+    _require_token()
+    if not as_of_date:
+        as_of_date = _beijing_date_string()
+    if mode not in {"live", "historical"}:
+        raise ValueError("mode 仅支持 live/historical")
+    if history_window != "1y":
+        raise ValueError("history_window 当前统一使用 1y")
+    params = {
+        "asOfDate": _validate_date(as_of_date),
+        "groupId": str(group_id).strip() or None,
+        "mode": mode,
+        "historyWindow": history_window,
+    }
+    return await _get(
+        "/api/quant/strategy-context",
+        params={key: value for key, value in params.items() if value is not None},
+    )
+
+
 async def run_portfolio_backtest(
     funds: list[dict],
     start_date: str,
@@ -142,8 +168,6 @@ async def run_portfolio_backtest(
     take_profit_rate: float = 0.15,
     stop_loss_rate: float = 0.10,
     reentry_rate: float = 0.05,
-    fee_rate: float = 0.001,
-    fixed_fee: float = 0,
     benchmark_code: str = "000300",
     name: str = "Agent 回测",
     client_run_id: str = "",
@@ -176,14 +200,8 @@ async def run_portfolio_backtest(
     if strategy_type not in {"target_rebalance", "threshold_reentry"}:
         raise ValueError("strategy_type 仅支持 target_rebalance/threshold_reentry")
     initial_capital = float(initial_capital)
-    fee_rate = float(fee_rate)
-    fixed_fee = float(fixed_fee)
     if not math.isfinite(initial_capital) or not 0 < initial_capital <= 1_000_000_000:
         raise ValueError("initial_capital 必须大于 0 且不超过 10 亿元")
-    if not math.isfinite(fee_rate) or not 0 <= fee_rate <= 0.1:
-        raise ValueError("fee_rate 必须在 0 到 0.1 之间")
-    if not math.isfinite(fixed_fee) or not 0 <= fixed_fee <= 100_000:
-        raise ValueError("fixed_fee 必须在 0 到 100000 之间")
     for field, value in {
         "take_profit_rate": take_profit_rate,
         "stop_loss_rate": stop_loss_rate,
@@ -205,8 +223,6 @@ async def run_portfolio_backtest(
         "take_profit_rate": float(take_profit_rate),
         "stop_loss_rate": float(stop_loss_rate),
         "reentry_rate": float(reentry_rate),
-        "fee_rate": fee_rate,
-        "fixed_fee": fixed_fee,
         "benchmark_code": _validate_fund_code(benchmark_code) if benchmark_code else None,
         "source_group_id": str(group_id).strip() or None,
         "source_group_name": None,

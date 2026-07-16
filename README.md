@@ -138,7 +138,7 @@ npm run backend:lint
   backend/tests/test_mcp_portfolio_adapter.py
 ```
 
-MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 76 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
+MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 77 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
 
 ## 各 Agent 配置示例
 
@@ -277,7 +277,8 @@ clawhub install huahua-daily
 - `get_portfolio_nav_history(start_date="", end_date="", benchmark_code="000300", group_id="")`：真实组合单位净值、累计收益、每日收益和回撤；与 App“策略 → 我的组合”同口径。
 - `get_portfolio_trade_review(start_date, end_date, benchmark_code="000300", group_id="")`：读取与 App 相同的加减仓复盘，以及 T1/T7/T20/T60 后续表现。
 - `get_batch_fund_nav_history(codes, start_date="", end_date="", order="asc")`：一次读取最多 20 只基金的官方历史净值，DB-only，不逐只请求上游；每只基金返回 `coverageStart/coverageEnd/baselineDate/complete`，`complete` 仅在请求区间首尾严格覆盖时为 true。
-- `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, fee_rate=0.001, fixed_fee=0, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。分析某个资产分组时传 `group_id`，服务端会校验并保存方案起点。`strategy_type` 支持固定比例 `target_rebalance` 和止盈止损再买入 `threshold_reentry`；固定比例的调仓频率支持 `none/daily/weekly/monthly/quarterly`。
+- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y")`：一次返回紧凑的真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额、市场指标、暴露与审计信息。服务端整包 Redis-first，底层行情继续复用既有 Redis/last-good 缓存；不返回原始日序列、资讯、Serenity 研究、评分或交易建议。
+- `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。分析某个资产分组时传 `group_id`，服务端会校验并保存方案起点。`strategy_type` 支持固定比例 `target_rebalance` 和止盈止损再买入 `threshold_reentry`；固定比例的调仓频率支持 `none/daily/weekly/monthly/quarterly`。
 - `get_portfolio_backtest(run_id, trade_offset=0, trade_limit=100, max_series_points=300)`：按 `run_portfolio_backtest` 返回的 `run_id` 读取已保存结果；走势最多抽样 500 点，交易按 offset/limit 分页，使用 `nextTradeOffset` 继续读取，适合审计长周期结果。
 - `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, strategy_version="", data_cutoff_at="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。
 - `get_quant_snapshots(strategy_id="", latest_only=false, limit=50, cursor="", start_date="", end_date="", snapshot_id=0, group_id="")`：分页读取不可变信号档案；传 `group_id` 只读取以该分组保存的判断，旧快照归入全部持仓；列表返回摘要，传 `snapshot_id` 读取完整内容。

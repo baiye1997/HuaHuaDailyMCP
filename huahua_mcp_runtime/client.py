@@ -77,6 +77,11 @@ def _raise_auth_error(response: httpx.Response) -> None:
     if response.status_code == 401:
         raise ValueError("Agent Token 无效或已过期，请在 App 重新生成并更新配置。")
     if response.status_code == 403:
+        if response.request.url.path == "/api/quant/strategy-context":
+            raise ValueError(
+                "无权读取量化策略上下文：请确认账号为 PRO 会员，"
+                "且 Agent Token 包含 quant:read scope。"
+            )
         raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
 
 
@@ -87,9 +92,19 @@ def _safe_response_detail(response: httpx.Response) -> str:
     except ValueError:
         return ""
     detail = payload.get("detail") if isinstance(payload, dict) else None
-    if not isinstance(detail, str):
-        return ""
-    return " ".join(detail.split())[:500]
+    if isinstance(detail, str):
+        return " ".join(detail.split())[:500]
+    if isinstance(detail, list):
+        messages = []
+        for item in detail[:5]:
+            if not isinstance(item, dict) or not isinstance(item.get("msg"), str):
+                continue
+            location = item.get("loc")
+            prefix = ".".join(str(part) for part in location) if isinstance(location, list) else ""
+            message = " ".join(item["msg"].split())
+            messages.append(f"{prefix}: {message}" if prefix else message)
+        return "；".join(messages)[:500]
+    return ""
 
 
 def _translate_transport_error(error: Exception) -> None:
@@ -102,8 +117,19 @@ def _translate_transport_error(error: Exception) -> None:
             request.method == "POST"
             and request.url.path == "/api/quant/snapshots"
         )
+        is_quant_strategy_context_read = (
+            request.method == "GET"
+            and request.url.path == "/api/quant/strategy-context"
+        )
         detail = _safe_response_detail(error.response) if (
-            is_quant_snapshot_write and status_code in {400, 409, 413, 422}
+            (
+                is_quant_snapshot_write
+                and status_code in {400, 409, 413, 422}
+            )
+            or (
+                is_quant_strategy_context_read
+                and status_code in {400, 422}
+            )
         ) else ""
         if detail:
             raise RuntimeError(f"服务器返回错误 {status_code}：{detail}") from error

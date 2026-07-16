@@ -207,7 +207,9 @@ get_purchase_limit_watchlist()
 
 需要多只基金官方净值时，使用 `get_batch_fund_nav_history`，不要并发循环调用 `get_item_history`。逐基金检查 `coverageStart`、`coverageEnd`、`baselineDate` 和 `complete`；只有请求区间的期初基线与结束边界都覆盖时，`complete` 才为 true。
 
-历史回测使用 `run_portfolio_backtest`。`strategy_type=target_rebalance` 按 `none/daily/weekly/monthly/quarterly` 频率恢复目标权重；`strategy_type=threshold_reentry` 按止盈、止损及反向波动再次买入阈值运行。只能提交基金代码、目标权重、日期、初始资金、费用和这些白名单参数；不得提交动态代码、URL、文件路径或表达式。如果要重试同一次运行，复用同一 `client_run_id`。
+量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入；需要原始序列时再调用细粒度接口。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
+
+历史回测使用 `run_portfolio_backtest`，统一采用零费率。`strategy_type=target_rebalance` 按 `none/daily/weekly/monthly/quarterly` 频率恢复目标权重；`strategy_type=threshold_reentry` 按止盈、止损及反向波动再次买入阈值运行。只能提交基金代码、目标权重、日期、初始资金和这些白名单参数；不得提交动态代码、URL、文件路径或表达式。如果要重试同一次运行，复用同一 `client_run_id`。
 
 运行成功后保留返回的 `run_id`。需要读取已保存回测、审计完整交易或继续分页时调用：
 
