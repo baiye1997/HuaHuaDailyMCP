@@ -8,6 +8,7 @@ import time  # noqa: F401
 from typing import Optional  # noqa: F401
 
 from .binding import bind_runtime
+from ..update_check import get_mcp_update_status
 
 _RUNTIME_DEPENDENCIES = ("_OFFICIAL_API", "_clear_session_caches", "_get", "_require_token", "_session", "build_tool_manifest")
 
@@ -40,9 +41,12 @@ async def set_token(token: str) -> str:
 async def get_tool_manifest() -> dict:
     """
     返回本 MCP 服务的能力边界、认证方式和建议调用顺序。
-    不访问后端，可用于 Agent 在会话开始时自检。
+    MCP 启动时会后台检查公开仓库版本；首次调用最多等待该检查 2 秒。
+    成功结果在进程内缓存 6 小时，失败结果 15 分钟后重试。
+    更新检查失败只会标记 unavailable，不影响能力发现和后续业务工具。
     """
-    return build_tool_manifest(_OFFICIAL_API)
+    update_status = await get_mcp_update_status()
+    return build_tool_manifest(_OFFICIAL_API, update_status)
 
 
 async def get_current_user() -> dict:

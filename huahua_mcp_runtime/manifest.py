@@ -1,13 +1,30 @@
-"""Static capability manifest for the public MCP surface."""
+"""Capability manifest for the public MCP surface."""
 
-def build_tool_manifest(official_api: str) -> dict:
+from typing import Any
+
+from .version import __version__
+
+
+def build_tool_manifest(
+    official_api: str,
+    update_status: dict[str, Any] | None = None,
+) -> dict:
     """
     返回本 MCP 服务的能力边界、认证方式和建议调用顺序。
-    不访问后端，可用于 Agent 在会话开始时自检。
+    可用于 Agent 在会话开始时自检。
     """
     return {
         "name": "huahua-daily",
         "transport": "stdio",
+        "runtime": {
+            "version": __version__,
+            "updateCheck": update_status or {
+                "status": "not_checked",
+                "currentVersion": __version__,
+                "latestVersion": None,
+                "updateAvailable": None,
+            },
+        },
         "auth": {
             "primary_env": "HUAHUA_AGENT_TOKEN",
             "header": "Authorization: AgentToken <token>",

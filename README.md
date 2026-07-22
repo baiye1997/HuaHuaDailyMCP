@@ -17,6 +17,13 @@ MCP 可读取完整持仓、交易流水、云端实时同步主数据和截图�
 
 官方 API 默认地址：`https://api.huahuadaily.cn`，可通过 `HUAHUA_API_BASE` 覆盖。
 
+MCP 启动时会在后台读取公开仓库中的版本声明，不延迟协议初始化；标准 MCP
+`instructions` 会要求 Agent 在每个会话首次使用前调用 `get_tool_manifest()` 读取结果。
+首次查询最多等待 2 秒，成功结果在当前进程缓存 6 小时，失败结果 15 分钟后重试。
+检查失败只返回 `updateCheck.status=unavailable`，不会阻断其他工具；发现新版时返回
+`updateAvailable=true` 和分安装方式的更新步骤。该机制只提示，不会自行安装或覆盖
+用户环境。特殊离线环境可设置 `HUAHUA_MCP_UPDATE_CHECK=0` 关闭。
+
 ## 安装方式
 
 ### 方式一：uvx（推荐）
@@ -115,6 +122,8 @@ mcp-server/
     ├── client.py                # HTTP、认证、会话与缓存
     ├── facade_helpers.py        # facade 的估算/组合 helper
     ├── manifest.py              # 工具 manifest
+    ├── update_check.py          # 有界、可降级的版本检查
+    ├── version.py               # MCP 运行时版本单一来源
     ├── portfolio_adapter.py     # 云端组合适配
     ├── portfolio_math.py        # 组合计算兼容函数
     ├── tool_registry.py         # 81 个工具的固定顺序与注册
@@ -132,11 +141,16 @@ huahua-daily
 发布前从主仓库运行：
 
 ```bash
+npm run mcp:version:check
 npm run backend:lint
 .venv/bin/python -m pytest \
   backend/tests/test_mcp_server_surface.py \
   backend/tests/test_mcp_portfolio_adapter.py
 ```
+
+修改 `server.py`、runtime package、MCP 依赖或 `SKILL.md` 契约时，必须先提升
+`huahua_mcp_runtime/version.py` 中的版本。仓库质量门会比较 Git 基线并阻止遗漏；
+单纯修改 README 不要求提升运行时版本。
 
 MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 81 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
 
@@ -255,7 +269,7 @@ clawhub install huahua-daily
 认证与自检：
 
 - `set_token(token)`：运行时设置 Agent Token。
-- `get_tool_manifest()`：返回能力边界、认证方式和安全说明。
+- `get_tool_manifest()`：返回能力边界、认证方式、安全说明和 MCP 启动预检结果。Agent 在每个会话首次使用 HuahuaDaily 时调用；若 `runtime.updateCheck.updateAvailable=true`，应按 `updateInstructions` 提示用户更新并重启 MCP。
 - `get_current_user()`：读取当前账号和会员信息。
 
 云端实时同步与持仓：
@@ -277,7 +291,7 @@ clawhub install huahua-daily
 - `get_portfolio_nav_history(start_date="", end_date="", benchmark_code="000300", group_id="")`：真实组合单位净值、累计收益、每日收益和回撤；与 App“策略 → 我的组合”同口径。
 - `get_portfolio_trade_review(start_date, end_date, benchmark_code="000300", group_id="")`：读取与 App 相同的加减仓复盘，以及 T1/T7/T20/T60 后续表现。
 - `get_batch_fund_nav_history(codes, start_date="", end_date="", order="asc")`：一次读取最多 20 只基金的官方历史净值，DB-only，不逐只请求上游；每只基金返回 `coverageStart/coverageEnd/baselineDate/complete`，`complete` 仅在请求区间首尾严格覆盖时为 true。
-- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。MCP 默认 `view="compact"`，保留评分、风控、执行、全市场聚合与主基准逐指数明细；需要完整份额、成本、官方净值、全部启用指数明细和下钻引用时使用 `view="full"`。两种视图复用同一 canonical Context 缓存。默认轮询池只读缓存，非默认指数按需由后端读穿；历史模式使用可按 `as_of_date` 截止的日线来源。不返回原始日序列，也不要求 Agent 自行计算。
+- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。MCP 默认 `view="compact"`，保留分析就绪状态、风控、执行、全市场聚合与主基准逐指数明细；需要完整份额、成本、官方净值、全部启用指数明细和下钻引用时使用 `view="full"`。两种视图复用同一 canonical Context 缓存。默认轮询池只读缓存，非默认指数按需由后端读穿；历史模式使用可按 `as_of_date` 截止的日线来源。不返回原始日序列，也不要求 Agent 自行计算。
 - `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。分析某个资产分组时传 `group_id`，服务端会校验并保存方案起点。`strategy_type` 支持固定比例 `target_rebalance` 和止盈止损再买入 `threshold_reentry`；固定比例的调仓频率支持 `none/daily/weekly/monthly/quarterly`。
 - `get_portfolio_backtest(run_id, trade_offset=0, trade_limit=100, max_series_points=300)`：按 `run_portfolio_backtest` 返回的 `run_id` 读取已保存结果；走势最多抽样 500 点，交易按 offset/limit 分页，使用 `nextTradeOffset` 继续读取，适合审计长周期结果。
 - `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, strategy_version="", data_cutoff_at="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。

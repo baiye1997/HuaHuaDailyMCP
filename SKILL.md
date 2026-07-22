@@ -25,7 +25,7 @@ MCP 可读取完整持仓、交易流水、原始云端实时同步主数据和�
 
 ## 2. 会话启动
 
-首次使用或不确定能力时，调用：
+每个 Agent 会话首次使用 HuahuaDaily 时，调用：
 
 ```json
 get_tool_manifest()
@@ -33,6 +33,7 @@ get_tool_manifest()
 
 用途：
 - 确认可用工具、认证方式、安全边界。
+- 检查 MCP 启动时生成的 `runtime.updateCheck`。若 `updateAvailable=true`，先告知用户当前版本、最新版本和返回的 `updateInstructions`；不要自行安装或覆盖用户环境。`unavailable` 只表示版本检查暂不可用，不阻断其他工具。
 - 不访问用户数据，不消耗行情请求。
 
 Token 缺失、无效或过期时，提示用户在 App「小窝 / 设置 → Agent 访问令牌」重新生成，并配置环境变量 `HUAHUA_AGENT_TOKEN`。
@@ -224,7 +225,7 @@ get_purchase_limit_watchlist()
 收益，不等同于历史不可重建。若全部持仓都处于该状态，顶层阻断原因为
 `portfolio_risk_pending_first_return`，不得改写成“历史数据丢失”。
 
-MCP 默认请求 `view=compact`：保留评分、风控、执行、市场和逐基金核心指标，省略
+MCP 默认请求 `view=compact`：保留分析就绪状态、风控、执行、市场和逐基金核心指标，省略
 可由顶层审计统一表达的逐基金指标来源/方法版本、重复净值与成本明细以及
 `drillRefs`；`market.indices` 只保留主基准逐指数明细，全市场结构仍由
 `indexCoverage`、`indexGroups`、`indexThemes`、`leaders20d` 和 `laggards20d`

@@ -69,6 +69,8 @@ from huahua_mcp_runtime.validation import (  # noqa: E402,F401 -- compatibility 
     validate_image_file as _validate_image_file,
 )
 from huahua_mcp_runtime.manifest import build_tool_manifest  # noqa: E402,F401 -- runtime binding
+from huahua_mcp_runtime.update_check import mcp_lifespan  # noqa: E402
+from huahua_mcp_runtime.version import __version__  # noqa: E402
 from huahua_mcp_runtime.facade_helpers import (  # noqa: E402,F401 -- compatibility facade
     download_portfolio as _download_portfolio_impl,
     download_portfolio_raw as _download_portfolio_raw_impl,
@@ -79,7 +81,20 @@ from huahua_mcp_runtime.tool_registry import TOOL_MODULES as _TOOL_MODULES  # no
 from huahua_mcp_runtime.tool_registry import TOOL_NAMES as _TOOL_NAMES  # noqa: E402,F401
 from huahua_mcp_runtime.tool_registry import register_tools  # noqa: E402
 
-mcp = FastMCP("huahua-daily")
+MCP_INSTRUCTIONS = (
+    "每个会话首次使用 HuahuaDaily 前先调用 get_tool_manifest。"
+    "若 runtime.updateCheck.updateAvailable=true，先告知用户当前版本、最新版本和更新步骤；"
+    "不要自行安装或覆盖用户环境。"
+)
+mcp = FastMCP(
+    "huahua-daily",
+    instructions=MCP_INSTRUCTIONS,
+    lifespan=mcp_lifespan,
+)
+# FastMCP does not currently expose its protocol server version in the public
+# constructor. Set it explicitly so initialize responses identify this runtime
+# instead of the installed mcp library version.
+mcp._mcp_server.version = __version__
 
 
 async def _fetch_estimates(
