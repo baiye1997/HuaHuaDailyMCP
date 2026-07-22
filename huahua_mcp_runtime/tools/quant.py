@@ -143,8 +143,9 @@ async def get_quant_strategy_context(
     mode: Literal["live", "historical"] = "live",
     history_window: str = "1y",
     benchmark_code: QuantBenchmarkCode = "000300",
+    view: Literal["compact", "full"] = "compact",
 ) -> dict:
-    """一次获取持仓及全指数紧凑指标；不返回原始指数序列，也不生成交易建议。"""
+    """一次获取量化上下文；默认紧凑视图，full 用于完整持仓和指数审计。"""
     _require_token()
     if not as_of_date:
         as_of_date = _beijing_date_string()
@@ -152,12 +153,15 @@ async def get_quant_strategy_context(
         raise ValueError("mode 仅支持 live/historical")
     if history_window != "1y":
         raise ValueError("history_window 当前统一使用 1y")
+    if view not in {"compact", "full"}:
+        raise ValueError("view 仅支持 compact/full")
     params = {
         "asOfDate": _validate_date(as_of_date),
         "groupId": str(group_id).strip() or None,
         "mode": mode,
         "historyWindow": history_window,
         "benchmarkCode": _validate_fund_code(benchmark_code),
+        "view": view,
     }
     return await _get(
         "/api/quant/strategy-context",

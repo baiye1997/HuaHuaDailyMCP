@@ -207,7 +207,29 @@ get_purchase_limit_watchlist()
 
 需要多只基金官方净值时，使用 `get_batch_fund_nav_history`，不要并发循环调用 `get_item_history`。逐基金检查 `coverageStart`、`coverageEnd`、`baselineDate` 和 `complete`；只有请求区间的期初基线与结束边界都覆盖时，`complete` 才为 true。
 
-量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入。`market.indices` 已包含全部启用指数的服务端预计算收益、均线、回撤、波动和 `trendState`；`market.indexGroups`、`market.indexThemes`、`leaders20d`、`laggards20d` 已完成市场宽度、科技成长等主题结构、平均收益与强弱排序。使用排名前必须检查 `rankingEligible`、`asOf`、`freshness` 和 `market.indexCoverage.rankingAsOf`。Agent 不得再逐指数拉取原始历史或自行计算、计数、排序，只负责解释这些确定性结果。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
+量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入。`view=full` 的 `market.indices` 包含全部启用指数的服务端预计算收益、均线、回撤、波动和 `trendState`；默认 compact 视图只保留主基准明细。`market.indexGroups`、`market.indexThemes`、`leaders20d`、`laggards20d` 在两种视图中都已完成市场宽度、科技成长等主题结构、平均收益与强弱排序。使用排名前必须检查 `rankingEligible`、`asOf`、`freshness` 和 `market.indexCoverage.rankingAsOf`。Agent 不得再逐指数拉取原始历史或自行计算、计数、排序，只负责解释这些确定性结果。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
+
+逐基金 `metrics` 已直接提供 `r5Pct`、`r10Pct`、`r20Pct` 等交易点收益，
+`bias5Pct`、`bias10Pct`、`bias20Pct`、`bias60Pct` 分别表示最新官方净值相对最近
+5、10、20、60 个有效官方净值点简单均值的乖离百分比；`consecutiveDownDays`
+表示最新官方净值序列的连续下跌交易点数。Agent 和策略引擎必须直接使用这些
+服务端字段，并在字段为 `null` 或列入 `missing` 时退出对应判断，不得拉取原始
+净值自行重算。
+
+个人组合量化复盘应先单独调用 `get_quant_strategy_context`，不要同时并发调用
+`get_index_metrics`、`get_fund_flow` 或 `get_status`。上下文已经包含核心指数指标、
+与持仓相关的板块资金流、执行窗口和数据质量；只有用户随后明确要求完整市场明细，
+或需要诊断服务健康状态时，才按需补充对应工具。读取 `portfolio.risk` 时同时检查
+`blockingFunds` 与 `pendingFirstReturnFunds`：后者表示新持仓尚未产生首个可归属 G 日
+收益，不等同于历史不可重建。若全部持仓都处于该状态，顶层阻断原因为
+`portfolio_risk_pending_first_return`，不得改写成“历史数据丢失”。
+
+MCP 默认请求 `view=compact`：保留评分、风控、执行、市场和逐基金核心指标，省略
+可由顶层审计统一表达的逐基金指标来源/方法版本、重复净值与成本明细以及
+`drillRefs`；`market.indices` 只保留主基准逐指数明细，全市场结构仍由
+`indexCoverage`、`indexGroups`、`indexThemes`、`leaders20d` 和 `laggards20d`
+完整表达。需要逐基金份额、成本、官方净值、完整指数明细或下钻引用时才显式使用
+`view=full`。两种视图复用同一份服务端 canonical Context 缓存，不会重复触发重任务。
 
 `execution.canCancel` 表示当前是否存在可撤销的花花日记本地 `PENDING` 记录，
 `execution.cancelableTransactionIds` 给出对应 ID，语义固定为
