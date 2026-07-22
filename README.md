@@ -117,7 +117,7 @@ mcp-server/
     ├── manifest.py              # 工具 manifest
     ├── portfolio_adapter.py     # 云端组合适配
     ├── portfolio_math.py        # 组合计算兼容函数
-    ├── tool_registry.py         # 76 个工具的固定顺序与注册
+    ├── tool_registry.py         # 81 个工具的固定顺序与注册
     ├── validation.py            # 输入校验
     └── tools/                   # fund/market/portfolio/community/quant 等领域工具
 ```
@@ -138,7 +138,7 @@ npm run backend:lint
   backend/tests/test_mcp_portfolio_adapter.py
 ```
 
-MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 77 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
+MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 81 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
 
 ## 各 Agent 配置示例
 
@@ -291,7 +291,7 @@ clawhub install huahua-daily
 - `search_item(query)`
 - `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`
 - `get_fund_source_previews(code)`：单只基金 huahua/a/b/c 多行情源估算预览，用于解释或选择数据源。
-- `get_item_detail(code)`
+- `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
 - `get_item_history(code)`
 - `get_item_dividends(code)`
 - `get_fund_timeline(code, source_mode="huahua")`
@@ -316,6 +316,8 @@ clawhub install huahua-daily
 - `get_next_trading_day(date)`
 - `get_fund_profile(code)`：基金画像（综合信息）。
 - `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只；非法代码直接报错；返回 `data`、`complete`、`missingCodes`、`timedOut`，服务端总预算 20 秒。
+- `get_fund_quant_metrics(code, view, ...)`：按需读取后端统一计算的单基金量化数据。`technical` 返回技术卡与历史统计，`momentum` 返回短中期收益/均线偏离/连跌，`risk` 返回中长期收益/回撤/波动，`full` 才组合全部数据；不要无条件请求 `full`。实时估算帧只适用于 `technical/full`。官方口径不接受客户端自定义净值，不输出买卖建议。
+- `get_batch_fund_quant_metrics(codes, view, current_frames=None)`：按相同语义视图批量取数；`technical/momentum/risk` 最多 50 只，`full` 最多 10 只。Agent 不应并发调用多次单只接口，也不应重复拉 NAV 历史计算。顶层 `complete` 只表示所有代码至少有一条官方净值；指标窗口检查 `item.metrics.complete`（`full` 为 `item.official.metrics.complete`），历史统计检查 `item.current.status`。`computing` 按 `retryAfterMs` 稍后重试；使用当前帧时还必须检查 freshness/stale。
 - `get_holder_ranking()`：App 内持有人数排行榜。
 - `get_instrument_catalog()`：指数/ETF 目录。
 - `get_instrument_quotes(codes)`：严格按目录标准代码返回指数/ETF实时行情，不补默认标的；最多20个。

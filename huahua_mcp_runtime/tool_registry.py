@@ -21,6 +21,8 @@ TOOL_NAMES = (
     "get_fund_period_rank",
     "get_fund_profile",
     "get_batch_fund_profiles",
+    "get_fund_quant_metrics",
+    "get_batch_fund_quant_metrics",
     "get_batch_fund_period_ranks",
     "get_status",
     "get_overview",

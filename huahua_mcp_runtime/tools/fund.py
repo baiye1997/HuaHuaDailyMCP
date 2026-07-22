@@ -8,6 +8,10 @@ import time  # noqa: F401
 from typing import Optional  # noqa: F401
 
 from .binding import bind_runtime
+from ..quant_validation import (
+    validate_quant_current_frame as _validate_quant_current_frame,
+    validate_quant_view as _validate_quant_view,
+)
 
 _RUNTIME_DEPENDENCIES = ("_fetch_estimates", "_get", "_normalize_data_source_mode", "_post", "_require_token", "_validate_fund_code")
 
@@ -44,8 +48,9 @@ async def search_item(query: str) -> list:
 
 async def get_item_detail(code: str) -> dict:
     """
-    获取项目深度信息，包括历史收益率、胜率分析、完整净值序列、费率等。
-    适合用户需要详细分析某只基金时调用；仅查询当前净值/涨跌请用 get_item_estimate，更轻量快速。
+    获取单只基金的基础详情与持仓信息。
+    本工具不触发量化指标或历史统计计算；量化数据请按需调用
+    get_fund_quant_metrics，当前净值/涨跌请调用 get_item_estimate。
 
     Args:
         code: 项目编号，如 "000001"
@@ -62,7 +67,7 @@ async def get_item_estimate(
 ) -> dict:
     """
     批量获取项目今日实时估算净值（最多 50 个）。
-    适合查询"现在涨了多少""今天净值多少"等日常行情问题，比 get_item_detail 轻量得多。
+    适合查询"现在涨了多少""今天净值多少"等日常行情问题，不会附带量化计算。
     结果在同一 session 内缓存 60 秒，与 get_records 共享缓存，无重复网络请求。
     支持新版后端多行情源：default_data_source_mode / data_source_mode_by_code。
 
@@ -261,6 +266,133 @@ async def get_batch_fund_profiles(codes: list[str]) -> dict:
         "complete": False,
         "timedOut": False,
     }
+
+
+async def get_fund_quant_metrics(
+    code: str,
+    view: str,
+    technical_value: Optional[float] = None,
+    value_basis: str = "official_nav",
+    value_as_of: str = "",
+    source: str = "",
+    target_nav_date: str = "",
+    latest_official_nav_date: str = "",
+    estimate_freshness: str = "",
+    estimate_stale: Optional[bool] = None,
+    fallback_reason: str = "",
+    last_good_captured_at: str = "",
+) -> dict:
+    """
+    按语义视图获取单只基金由后端统一计算的量化数据。
+    technical=技术卡与历史统计；momentum=短中期收益/均线偏离/连跌；
+    risk=中长期收益/回撤/波动；full=完整数据。必须按问题选择视图。
+    默认使用最新官方净值；如已通过 get_item_estimate 取得盘中估算值，可传
+    technical_value 和 value_basis="live_estimate"，避免 Agent 拉取净值历史重复计算。
+    本工具只提供数据与统计，不输出买卖方向或建议金额。
+
+    Args:
+        code: 6 位基金代码。
+        view: technical、momentum、risk 或 full；不要无条件使用 full。
+        technical_value: 可选，当前有效估算净值；不传则使用官方净值口径。
+        value_basis: official_nav 或 live_estimate。
+        value_as_of: 当前值归属/观察日期，建议使用估算帧的 display_date。
+        source: 当前值的数据源标识。
+        target_nav_date: 当前估算帧对应的目标净值 D 日。
+        latest_official_nav_date: 已公布的最新官方净值 D 日。
+        estimate_freshness: 对应估算帧的 fresh、stale 或 unavailable 状态。
+        estimate_stale: 对应估算帧是否来自陈旧兜底。
+        fallback_reason: 估算帧发生降级时的原因。
+        last_good_captured_at: last-good 估算帧的 ISO 8601 捕获时间。
+    """
+    _require_token()
+    validated_code = _validate_fund_code(code)
+    validated_view = _validate_quant_view(view)
+    has_current_frame = any((
+        technical_value is not None,
+        value_basis != "official_nav",
+        value_as_of,
+        source,
+        target_nav_date,
+        latest_official_nav_date,
+        estimate_freshness,
+        estimate_stale is not None,
+        fallback_reason,
+        last_good_captured_at,
+    ))
+    if has_current_frame and validated_view not in {"technical", "full"}:
+        raise ValueError("当前估算帧仅适用于 technical 或 full 视图")
+    frame = _validate_quant_current_frame({
+        "valueBasis": value_basis,
+        **({"technicalValue": technical_value} if technical_value is not None else {}),
+        **({"valueAsOf": value_as_of} if value_as_of else {}),
+        **({"source": source} if source else {}),
+        **({"targetNavDate": target_nav_date} if target_nav_date else {}),
+        **({"latestOfficialNavDate": latest_official_nav_date} if latest_official_nav_date else {}),
+        **({"estimateFreshness": estimate_freshness} if estimate_freshness else {}),
+        **({"estimateStale": estimate_stale} if estimate_stale is not None else {}),
+        **({"fallbackReason": fallback_reason} if fallback_reason else {}),
+        **({"lastGoodCapturedAt": last_good_captured_at} if last_good_captured_at else {}),
+    }) if validated_view in {"technical", "full"} else {}
+    params = {"view": validated_view, **frame}
+    return await _get(f"/api/fund/quant-metrics/{validated_code}", params=params)
+
+
+async def get_batch_fund_quant_metrics(
+    codes: list[str],
+    view: str,
+    current_frames: Optional[dict] = None,
+) -> dict:
+    """
+    批量获取后端统一量化数据。technical、momentum、risk 最多 50 只，
+    full 最多 10 只。服务端按视图加载依赖并批量读缓存/数据库；
+    不要为每只基金并发调用单只接口。本工具不输出投资建议。
+    顶层 complete 只表示所有代码至少有一条官方净值；指标视图的 251 点窗口检查
+    item.metrics.complete，full 检查 item.official.metrics.complete；历史统计检查
+    item.current.status。computing 可按 retryAfterMs 稍后重试，
+    insufficient_history / insufficient_samples 是当前数据集下的终态。
+
+    Args:
+        codes: 6 位基金代码列表，最多 50 只；非法代码会直接报错。
+        view: technical、momentum、risk 或 full；不要无条件使用 full。
+        current_frames: 可选，code 到当前估算帧的映射；字段使用 technicalValue、
+            valueBasis、valueAsOf、source、targetNavDate、latestOfficialNavDate，及可选的
+            estimateFreshness、estimateStale、fallbackReason、lastGoodCapturedAt。
+    """
+    _require_token()
+    validated_view = _validate_quant_view(view)
+    if len(codes) > 50:
+        raise ValueError("codes 最多支持 50 只基金")
+    validated_codes = []
+    seen = set()
+    for code in codes:
+        normalized = _validate_fund_code(code)
+        if normalized not in seen:
+            validated_codes.append(normalized)
+            seen.add(normalized)
+    if not validated_codes:
+        raise ValueError("codes 不能为空")
+    if validated_view == "full" and len(validated_codes) > 10:
+        raise ValueError("full 视图批量请求最多支持 10 只基金")
+    if current_frames is not None and not isinstance(current_frames, dict):
+        raise ValueError("current_frames 必须是对象")
+    normalized_frames = current_frames or {}
+    if normalized_frames and validated_view not in {"technical", "full"}:
+        raise ValueError("current_frames 仅适用于 technical 或 full 视图")
+    unexpected = set(normalized_frames) - set(validated_codes)
+    if unexpected:
+        raise ValueError("current_frames 只能包含本次请求的基金代码")
+    normalized_frames = {
+        code: _validate_quant_current_frame(frame)
+        for code, frame in normalized_frames.items()
+    }
+    return await _post(
+        "/api/fund/quant-metrics/batch",
+        {
+            "codes": validated_codes,
+            "view": validated_view,
+            "currentFrames": normalized_frames,
+        },
+    )
 
 
 async def get_batch_fund_period_ranks(codes: list[str]) -> dict:

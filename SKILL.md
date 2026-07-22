@@ -327,6 +327,8 @@ get_batch_fund_period_ranks({"codes": ["110022", "161725"]})
 get_fund_timeline({"code": "110022"})
 get_fund_profile({"code": "110022"})
 get_batch_fund_profiles({"codes": ["110022", "161725"]})
+get_fund_quant_metrics({"code": "110022", "view": "technical"})
+get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"})
 ```
 
 选择规则：
@@ -337,13 +339,32 @@ get_batch_fund_profiles({"codes": ["110022", "161725"]})
 - 分红派息：`get_item_dividends`。
 - 近 1/3/6 月、1 年排名：`get_fund_period_rank`（单只）或 `get_batch_fund_period_ranks`（批量，最多 50 只）。
 - 今日盘中估值曲线：`get_fund_timeline`；若用户指定行情源，传 `source_mode`。
-- 综合详情、胜率表、持仓等深度信息：`get_item_detail`。此工具较重，不要作为日常行情首选。
+- 基础详情与持仓信息：`get_item_detail`。该工具不触发量化计算；收益、均线偏离、
+  回撤、波动和历史统计必须按需调用 `get_fund_quant_metrics`。
 - QDII 夜盘实时估值：`get_night_estimate`（需会员，美股交易时段有效）；用户在 App 添加的夜盘自选基金列表用 `get_night_watchlist`，通常先调这个再传给 `get_night_estimate`。
 - 基金画像（综合信息）：`get_fund_profile`。包含费率、排名、持仓、行业、分红、风险指标等。
 - 批量画像：`get_batch_fund_profiles`（最多 20 只）。读取 `data`，并检查
   `complete`、`missingCodes`、`timedOut`；缺失表示服务端在 20 秒预算内未取得，
   不得臆造画像或把部分结果当完整结果。任何非法基金代码都会使调用直接
   失败，不会被静默跳过。
+- 单基金量化数据：`get_fund_quant_metrics`。必须按问题选择视图：`technical`
+  只取技术卡与历史统计，`momentum` 只取短中期收益、均线偏离和连跌，`risk`
+  只取中长期收益、回撤和波动，只有确实同时需要两类数据时才用 `full`。这些数据
+  均由后端按统一口径计算；如已取得盘中估算帧，可在 `technical/full` 视图传
+  `technical_value`、`value_basis="live_estimate"` 及日期字段。同步传递估算结果的
+  `freshness`、`stale`、`fallbackReason` 和 `lastGoodCapturedAt`；响应为
+  `estimateFreshness="stale"` 或 `"unavailable"` 时必须明确数据口径，不能当作新鲜
+  盘中值。`value_basis="official_nav"` 时不得传入自定义净值，官方值始终由服务端读取。
+- 多基金排序/对比：`get_batch_fund_quant_metrics`。必须传语义视图；
+  `technical/momentum/risk` 最多 50 只，`full` 最多 10 只。
+  优先一次批量调用，不要并发调用多次单只接口，也不要拉取 NAV 历史重复计算。
+  如传 `current_frames`，同样检查每项的 `estimateFreshness`、`estimateStale` 和
+  `fallbackReason`。`current_frames` 只适用于 `technical/full`。顶层 `complete` 只表示
+  全部代码至少有一条官方净值；指标窗口看 `item.metrics.complete`（`full` 看
+  `item.official.metrics.complete`），历史统计看 `item.current.status`。`computing` 按
+  `retryAfterMs` 稍后重试，
+  `insufficient_history` / `insufficient_samples` 是当前数据集下的终态，不得推断缺失
+  统计。返回值只提供数据与历史统计，不包含买卖方向或建议金额。
 
 ### 4.4 用户问市场整体
 
