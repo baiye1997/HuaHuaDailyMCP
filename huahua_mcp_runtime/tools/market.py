@@ -83,10 +83,58 @@ async def get_fund_flow() -> dict:
     需要 PRO 会员权限。适合回答"资金在流向哪里""哪些板块受追捧"等问题。
 
     Returns:
-        dict 包含 fundFlow（基金资金流）、sectorFlow（板块资金流）、polledAt（数据时间）
+        dict 包含 fundFlow、sectorFlow 和 polledAt。sectorFlow 非空时，
+        byCategory 同时给出 industry/concept；必须结合 partial、
+        categoriesPresent/categoriesFailed 和 sectorFlow.freshness 判断完整性。
+        categoryFreshness/categoryPolledAt 仅在服务端用 last-good 补齐
+        分类时存在，存在时再用它们判断各分类时点。
     """
     _require_token()
     return await _get("/api/market/fund-flow")
+
+
+async def get_sector_metrics() -> dict:
+    """
+    获取全部已配置行业/主题 ETF 代理的服务端量化指标。
+
+    返回实时价、MA20/MA60、20/60/120/250 交易日收益、均线偏离、
+    趋势、回撤、波动率和 20 日强弱排名，并分别给出报价与历史日线
+    新鲜度和 historyFreshnessBasis。优先基于场内收盘价；基金净值降级
+    会明确标记且不得进入
+    场内强弱排名。Agent 不应再拉取日线自行计算。ETF 仅作为板块代理，
+    不会冒充其底层指数。
+    """
+    _require_token()
+    return await _get("/api/market/sector-metrics")
+
+
+async def get_index_metrics(codes: Optional[list[str]] = None) -> dict:
+    """
+    获取全部或指定指数的服务端量化指标，不依赖用户持仓。
+
+    返回实时价、MA20/MA60、20/60/120/250 交易日收益、趋势、回撤、
+    波动率、跨市场分组及强弱排名。`historyFreshness` 和
+    `historyExpectedAsOf` 按所属市场时区、收盘时刻和交易日历，
+    说明服务器当前时刻已完成的最新收盘日；`historyLagCalendarDays`
+    仅作时间跨度展示。必须检查 `historyFreshnessBasis`：交易日历不可证明
+    完整或市场未配置时，日线会标记 unknown 并退出排名。即使
+    实时报价新鲜，陈旧历史也不会参与排名。Agent 不得再拉取原始日线
+    自行计算。
+
+    Args:
+        codes: 可选指数代码列表，例如 ["399006", "000688", "KS11"]；
+            留空返回全部已启用指数，最多 20 个。
+    """
+    _require_token()
+    normalized = list(dict.fromkeys(
+        str(code or "").strip().upper()
+        for code in (codes or [])
+        if str(code or "").strip()
+    ))
+    if len(normalized) > 20:
+        raise ValueError("codes 最多支持 20 个指数")
+    params = {"codes": ",".join(normalized)} if normalized else None
+    return await _get("/api/market/index-metrics", params=params)
 
 
 async def get_indices() -> list:
@@ -184,10 +232,16 @@ async def get_instrument_quotes(codes: list[str]) -> dict:
     适合同时查看多个指数的最新价格、涨跌幅。
 
     Args:
-        codes: 标的代码列表，如 ["sh000300", "sh000001", "sz399001"]，最多 20 个
+        codes: 目录中的标准代码，如 ["000300", "000001", "399001"]，最多 20 个
     """
     _require_token()
-    validated = [str(c).strip() for c in (codes or [])[:20] if str(c).strip()]
+    validated = list(dict.fromkeys(
+        str(code or "").strip().upper()
+        for code in (codes or [])
+        if str(code or "").strip()
+    ))
+    if len(validated) > 20:
+        raise ValueError("codes 最多支持 20 个市场标的")
     if not validated:
         return {"quotes": [], "polledAt": None}
     code_str = ",".join(validated)
@@ -200,11 +254,11 @@ async def get_instrument_timeline(code: str, range: str = "1d") -> dict:
     适合了解今日盘中走势。
 
     Args:
-        code: 标的代码，如 "sh000300"
+        code: 目录中的标准代码，如 "000300"、"399006" 或 "KS11"
         range: 时间范围，默认 "1d"（当日）
     """
     _require_token()
-    normalized = str(code or "").strip()
+    normalized = str(code or "").strip().upper()
     if not normalized:
         raise ValueError("标的代码不能为空")
     return await _get("/api/market/indices/timeline", params={"code": normalized, "range": range})
@@ -216,15 +270,15 @@ async def get_instrument_history(code: str, period: str = "1m") -> dict:
     适合分析中长期走势。
 
     Args:
-        code: 标的代码，如 "sh000300"
+        code: 目录中的标准代码，如 "000300"、"399006" 或 "KS11"
         period: 时间周期，可选 "1m"（1个月）、"3m"（3个月）、"6m"（6个月）、"1y"（1年）
     """
     _require_token()
-    normalized = str(code or "").strip()
+    normalized = str(code or "").strip().upper()
     if not normalized:
         raise ValueError("标的代码不能为空")
     if period not in ("1m", "3m", "6m", "1y"):
-        period = "1m"
+        raise ValueError("period 仅支持 1m、3m、6m 或 1y")
     return await _get("/api/market/indices/history", params={"code": normalized, "period": period})
 
 

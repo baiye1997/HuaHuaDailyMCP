@@ -277,7 +277,7 @@ clawhub install huahua-daily
 - `get_portfolio_nav_history(start_date="", end_date="", benchmark_code="000300", group_id="")`：真实组合单位净值、累计收益、每日收益和回撤；与 App“策略 → 我的组合”同口径。
 - `get_portfolio_trade_review(start_date, end_date, benchmark_code="000300", group_id="")`：读取与 App 相同的加减仓复盘，以及 T1/T7/T20/T60 后续表现。
 - `get_batch_fund_nav_history(codes, start_date="", end_date="", order="asc")`：一次读取最多 20 只基金的官方历史净值，DB-only，不逐只请求上游；每只基金返回 `coverageStart/coverageEnd/baselineDate/complete`，`complete` 仅在请求区间首尾严格覆盖时为 true。
-- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y")`：一次返回紧凑的真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额、市场指标、暴露与审计信息。服务端整包 Redis-first，底层行情继续复用既有 Redis/last-good 缓存；不返回原始日序列、资讯、Serenity 研究、评分或交易建议。
+- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300")`：一次返回紧凑的真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额，以及全部启用指数的服务端预计算趋势、收益、均线、回撤、波动、跨市场主题和强弱排名。默认轮询池只读缓存，非默认指数按需由后端读穿；历史模式使用可按 `as_of_date` 截止的日线来源。每项都带公式版本、精度、截止日、完整性和排名资格，不返回原始日序列，也不要求 Agent 自行计算。
 - `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。分析某个资产分组时传 `group_id`，服务端会校验并保存方案起点。`strategy_type` 支持固定比例 `target_rebalance` 和止盈止损再买入 `threshold_reentry`；固定比例的调仓频率支持 `none/daily/weekly/monthly/quarterly`。
 - `get_portfolio_backtest(run_id, trade_offset=0, trade_limit=100, max_series_points=300)`：按 `run_portfolio_backtest` 返回的 `run_id` 读取已保存结果；走势最多抽样 500 点，交易按 offset/limit 分页，使用 `nextTradeOffset` 继续读取，适合审计长周期结果。
 - `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, strategy_version="", data_cutoff_at="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。
@@ -306,19 +306,21 @@ clawhub install huahua-daily
 - `get_status()`
 - `get_overview()`
 - `get_sector_wind()`：板块风向，返回领涨/领跌板块和数据时间。
+- `get_index_metrics(codes=None)`：不依赖持仓，返回全部或指定指数的服务端 MA、收益、趋势、回撤、波动和强弱排名；例如 `codes=["KS11"]` 直接取得韩国指数 MA20。`historyExpectedAsOf` 与 `historyFreshness` 按所属市场时区、收盘时刻和交易日历判定日线是否到位，`historyFreshnessBasis` 会显式标记交易日历或市场配置不可用的降级，`historyLagCalendarDays` 仅作跨度展示。
+- `get_sector_metrics()`：全部行业/主题 ETF 代理的服务端 MA、收益、回撤、波动和强弱排名；同样返回独立历史新鲜度，Agent 不再自行计算。
 - `get_yesterday_rank()`：上一交易日基金涨跌榜。
-- `get_fund_flow()`：资金流向数据（需 PRO 会员），返回 fundFlow、sectorFlow、polledAt。
+- `get_fund_flow()`：资金流向数据（需 PRO 会员）；`sectorFlow` 非空时同时提供 industry 与 concept，分类由 last-good 补齐时返回 `categoryFreshness`、`categoryPolledAt`。
 - `get_indices()`
 - `get_benchmark_history(code="sh000300")`
 - `calculate_trading_dates(date, time_mode="PRE_MARKET", confirm_days=1)`
 - `get_next_trading_day(date)`
 - `get_fund_profile(code)`：基金画像（综合信息）。
-- `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只。
+- `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只；非法代码直接报错；返回 `data`、`complete`、`missingCodes`、`timedOut`，服务端总预算 20 秒。
 - `get_holder_ranking()`：App 内持有人数排行榜。
 - `get_instrument_catalog()`：指数/ETF 目录。
-- `get_instrument_quotes(codes)`：指数/ETF 实时行情。
-- `get_instrument_timeline(code, range="1d")`：指数/ETF 分时走势。
-- `get_instrument_history(code, period="1m")`：指数/ETF 历史数据。
+- `get_instrument_quotes(codes)`：严格按目录标准代码返回指数/ETF实时行情，不补默认标的；最多20个。
+- `get_instrument_timeline(code, range="1d")`：使用目录标准代码读取指数/ETF分时走势，例如 `000300`、`399006`、`KS11`。
+- `get_instrument_history(code, period="1m")`：使用目录标准代码读取指数/ETF历史数据；周期仅支持 `1m/3m/6m/1y`。
 
 交易请求：
 

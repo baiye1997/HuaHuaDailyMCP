@@ -14,6 +14,11 @@ from .binding import bind_runtime
 
 _RUNTIME_DEPENDENCIES = ("_beijing_date_string", "_get", "_post", "_require_token", "_validate_data_cutoff", "_validate_date", "_validate_fund_code")
 
+QuantBenchmarkCode = Literal[
+    "000001", "399001", "399006", "000016", "000300",
+    "000688", "000852", "000905", "000510", "899050",
+]
+
 if False:  # pragma: no cover - populated by bind() before tool registration
     _beijing_date_string = None
     _get = None
@@ -95,7 +100,7 @@ async def get_batch_fund_nav_history(
 async def get_portfolio_nav_history(
     start_date: str = "",
     end_date: str = "",
-    benchmark_code: str = "000300",
+    benchmark_code: Optional[QuantBenchmarkCode] = "000300",
     group_id: str = "",
 ) -> dict:
     """获取真实组合的每日收益、单位净值、累计收益和回撤曲线，口径与 App 策略回放完全一致。"""
@@ -118,7 +123,7 @@ async def get_portfolio_nav_history(
 async def get_portfolio_trade_review(
     start_date: str,
     end_date: str,
-    benchmark_code: str = "000300",
+    benchmark_code: Optional[QuantBenchmarkCode] = "000300",
     group_id: str = "",
 ) -> dict:
     """获取与 App 策略实验室一致的加减仓复盘和 T1/T7/T20/T60 后续表现。"""
@@ -137,8 +142,9 @@ async def get_quant_strategy_context(
     group_id: str = "",
     mode: Literal["live", "historical"] = "live",
     history_window: str = "1y",
+    benchmark_code: QuantBenchmarkCode = "000300",
 ) -> dict:
-    """一次获取紧凑、真实、可审计的量化输入；不生成评分、信号、金额或交易建议。"""
+    """一次获取持仓及全指数紧凑指标；不返回原始指数序列，也不生成交易建议。"""
     _require_token()
     if not as_of_date:
         as_of_date = _beijing_date_string()
@@ -151,6 +157,7 @@ async def get_quant_strategy_context(
         "groupId": str(group_id).strip() or None,
         "mode": mode,
         "historyWindow": history_window,
+        "benchmarkCode": _validate_fund_code(benchmark_code),
     }
     return await _get(
         "/api/quant/strategy-context",
@@ -168,7 +175,7 @@ async def run_portfolio_backtest(
     take_profit_rate: float = 0.15,
     stop_loss_rate: float = 0.10,
     reentry_rate: float = 0.05,
-    benchmark_code: str = "000300",
+    benchmark_code: Optional[QuantBenchmarkCode] = "000300",
     name: str = "Agent 回测",
     client_run_id: str = "",
     group_id: str = "",
@@ -357,7 +364,7 @@ async def get_quant_snapshots(
 
 async def get_quant_snapshot_review(
     snapshot_id: int,
-    benchmark_code: str = "000300",
+    benchmark_code: Optional[QuantBenchmarkCode] = "000300",
 ) -> dict:
     """读取与 App 一致的不可变信号快照 T1/T7/T20/T60 权威复盘。"""
     _require_token()

@@ -228,8 +228,9 @@ async def get_fund_profile(code: str) -> dict:
 
 async def get_batch_fund_profiles(codes: list[str]) -> dict:
     """
-    批量获取多只基金的画像数据，返回 code → 画像的映射。
-    适合同时对比多只基金的基本面，一次最多 20 只。
+    批量获取多只基金的画像数据，一次最多 20 只。
+    返回 data（code → 画像）、complete、missingCodes、timedOut；
+    适合同时对比多只基金的基本面，并显式识别部分结果。
 
     Args:
         codes: 项目编号列表，如 ["000001", "161725"]，最多 20 个
@@ -237,18 +238,29 @@ async def get_batch_fund_profiles(codes: list[str]) -> dict:
     _require_token()
     validated_codes = []
     seen = set()
-    for code in codes[:20]:
-        try:
-            normalized = _validate_fund_code(code)
-            if normalized not in seen:
-                validated_codes.append(normalized)
-                seen.add(normalized)
-        except ValueError:
-            continue
+    for code in codes:
+        normalized = _validate_fund_code(code)
+        if normalized not in seen:
+            validated_codes.append(normalized)
+            seen.add(normalized)
+    if len(validated_codes) > 20:
+        raise ValueError("codes 最多支持 20 只基金")
     if not validated_codes:
-        return {}
+        return {
+            "data": {},
+            "requestedCodes": [],
+            "missingCodes": [],
+            "complete": True,
+            "timedOut": False,
+        }
     payload = await _post("/api/fund/profile/batch", {"codes": validated_codes})
-    return payload.get("data", {}) if isinstance(payload, dict) else {}
+    return payload if isinstance(payload, dict) else {
+        "data": {},
+        "requestedCodes": validated_codes,
+        "missingCodes": validated_codes,
+        "complete": False,
+        "timedOut": False,
+    }
 
 
 async def get_batch_fund_period_ranks(codes: list[str]) -> dict:

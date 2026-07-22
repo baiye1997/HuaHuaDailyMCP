@@ -113,23 +113,18 @@ def _translate_transport_error(error: Exception) -> None:
     if isinstance(error, httpx.HTTPStatusError):
         status_code = error.response.status_code
         request = error.response.request
-        is_quant_snapshot_write = (
-            request.method == "POST"
-            and request.url.path == "/api/quant/snapshots"
-        )
-        is_quant_strategy_context_read = (
-            request.method == "GET"
-            and request.url.path == "/api/quant/strategy-context"
-        )
+        safe_validation_routes = {
+            ("POST", "/api/quant/snapshots"),
+            ("GET", "/api/quant/strategy-context"),
+            ("GET", "/api/market/index-metrics"),
+            ("GET", "/api/market/indices/latest"),
+            ("GET", "/api/market/indices/timeline"),
+            ("GET", "/api/market/indices/history"),
+            ("POST", "/api/fund/profile/batch"),
+        }
         detail = _safe_response_detail(error.response) if (
-            (
-                is_quant_snapshot_write
-                and status_code in {400, 409, 413, 422}
-            )
-            or (
-                is_quant_strategy_context_read
-                and status_code in {400, 422}
-            )
+            (request.method, request.url.path) in safe_validation_routes
+            and status_code in {400, 409, 413, 422}
         ) else ""
         if detail:
             raise RuntimeError(f"服务器返回错误 {status_code}：{detail}") from error

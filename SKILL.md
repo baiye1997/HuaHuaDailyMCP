@@ -207,7 +207,12 @@ get_purchase_limit_watchlist()
 
 需要多只基金官方净值时，使用 `get_batch_fund_nav_history`，不要并发循环调用 `get_item_history`。逐基金检查 `coverageStart`、`coverageEnd`、`baselineDate` 和 `complete`；只有请求区间的期初基线与结束边界都覆盖时，`complete` 才为 true。
 
-量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入；需要原始序列时再调用细粒度接口。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
+量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入。`market.indices` 已包含全部启用指数的服务端预计算收益、均线、回撤、波动和 `trendState`；`market.indexGroups`、`market.indexThemes`、`leaders20d`、`laggards20d` 已完成市场宽度、科技成长等主题结构、平均收益与强弱排序。使用排名前必须检查 `rankingEligible`、`asOf`、`freshness` 和 `market.indexCoverage.rankingAsOf`。Agent 不得再逐指数拉取原始历史或自行计算、计数、排序，只负责解释这些确定性结果。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
+
+`execution.canCancel` 表示当前是否存在可撤销的花花日记本地 `PENDING` 记录，
+`execution.cancelableTransactionIds` 给出对应 ID，语义固定为
+`delete_local_pending_ledger_record`。这与外部基金公司订单无关；尚未在 App
+确认的 Agent 请求则通过 `update_agent_request(..., "DISMISSED")` 撤回提示。
 
 历史回测使用 `run_portfolio_backtest`，统一采用零费率。`strategy_type=target_rebalance` 按 `none/daily/weekly/monthly/quarterly` 频率恢复目标权重；`strategy_type=threshold_reentry` 按止盈、止损及反向波动再次买入阈值运行。只能提交基金代码、目标权重、日期、初始资金和这些白名单参数；不得提交动态代码、URL、文件路径或表达式。如果要重试同一次运行，复用同一 `client_run_id`。
 
@@ -313,9 +318,27 @@ get_batch_fund_profiles({"codes": ["110022", "161725"]})
 - 综合详情、胜率表、持仓等深度信息：`get_item_detail`。此工具较重，不要作为日常行情首选。
 - QDII 夜盘实时估值：`get_night_estimate`（需会员，美股交易时段有效）；用户在 App 添加的夜盘自选基金列表用 `get_night_watchlist`，通常先调这个再传给 `get_night_estimate`。
 - 基金画像（综合信息）：`get_fund_profile`。包含费率、排名、持仓、行业、分红、风险指标等。
-- 批量画像：`get_batch_fund_profiles`（最多 20 只）。
+- 批量画像：`get_batch_fund_profiles`（最多 20 只）。读取 `data`，并检查
+  `complete`、`missingCodes`、`timedOut`；缺失表示服务端在 20 秒预算内未取得，
+  不得臆造画像或把部分结果当完整结果。任何非法基金代码都会使调用直接
+  失败，不会被静默跳过。
 
 ### 4.4 用户问市场整体
+
+用户只问指数结构、均线、收益或强弱时，直接使用服务端指标接口，不要为了
+一个指数拉取个人持仓上下文：
+
+```json
+get_index_metrics({"codes": ["399006", "000688", "KS11"]})
+```
+
+省略 `codes` 返回全部已启用指数。必须检查 `complete`、`rankingEligible`、
+`asOf`、`freshness`、`historyFreshness`、`historyExpectedAsOf`、
+`historyFreshnessBasis`、`historyLagCalendarDays` 和 `technicalValueBasis`；
+历史新鲜度按所属市场当前时刻已完成的预期收盘日判断，calendar lag
+仅作跨度展示。`historyFreshness=stale` 或 `unknown` 时不得使用对应 MA、收益或
+排名结论，即使实时价格本身可用。不得调用
+`get_instrument_history` 自行计算 MA、收益、回撤、波动或排名。
 
 概览：
 
@@ -334,6 +357,27 @@ get_indices()
 ```json
 get_sector_wind()
 ```
+
+板块结构、均线和强弱排名直接调用：
+
+```json
+get_sector_metrics()
+```
+
+该工具一次返回全部已配置行业/主题 ETF 代理的服务端预计算指标；必须检查
+`historyBasis`、`technicalValueBasis`、`asOf`、`freshness`、
+`historyFreshness`、`historyExpectedAsOf`、`historyFreshnessBasis`、
+`historyLagCalendarDays` 和 `rankingEligible`。`fund_nav_fallback` 仅作降级展示，
+不参与场内强弱排名。交易日历不可证明完整时，
+`historyFreshness=unknown` 且必须退出排名。
+不得再调用
+`get_instrument_history` 自行计算 MA、收益、回撤、波动或排名。
+
+`get_fund_flow()` 的 `sectorFlow` 正常同时包含 `industry` 与 `concept`。
+始终检查 `sectorFlow.freshness`、`partial`、`categoriesPresent` 和
+`categoriesFailed`。若某一分类由完整 last-good 快照补齐，还会返回
+`categoryFreshness` 与 `categoryPolledAt`；字段存在时必须检查，不得把补齐分类
+描述成当前轮询时点的实时数据。
 
 今日涨跌榜：
 
@@ -372,6 +416,11 @@ get_fund_flow()
 ```
 
 返回 `fundFlow`（基金资金流）、`sectorFlow`（板块资金流）、`polledAt`（数据时间）。
+先检查 `sectorFlow` 是否非空；非空时 `byCategory.industry` 与
+`byCategory.concept` 始终存在。同时检查 `categoriesPresent`、
+`categoriesFailed`、`partial` 和 `sectorFlow.freshness`。若响应包含
+`categoryFreshness` 和 `categoryPolledAt`，再按分类核对它们，
+不得把上游缺失或 last-good 补齐解释为当前轮零流入。
 需要 PRO 会员权限。适合回答"主力资金在买什么板块""哪些基金被大额申购/赎回"等问题。
 
 ### 4.7 用户问指数/ETF 行情
@@ -385,19 +434,22 @@ get_instrument_catalog()
 实时行情：
 
 ```json
-get_instrument_quotes({"codes": ["sh000300", "sh000001"]})
+get_instrument_quotes({"codes": ["000300", "000001"]})
 ```
+
+这里必须使用 `get_instrument_catalog` 返回的标准代码；程序化查询严格按请求
+集合返回，不会自动补默认标的或截断成 App 卡片数量。
 
 分时走势：
 
 ```json
-get_instrument_timeline({"code": "sh000300"})
+get_instrument_timeline({"code": "000300"})
 ```
 
 历史数据：
 
 ```json
-get_instrument_history({"code": "sh000300", "period": "1m"})
+get_instrument_history({"code": "000300", "period": "1m"})
 ```
 
 ### 4.8 用户问"跑赢大盘/对比沪深300"

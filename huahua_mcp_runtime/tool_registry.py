@@ -27,6 +27,8 @@ TOOL_NAMES = (
     "get_sector_wind",
     "get_yesterday_rank",
     "get_fund_flow",
+    "get_index_metrics",
+    "get_sector_metrics",
     "get_indices",
     "get_holder_ranking",
     "get_night_estimate",
