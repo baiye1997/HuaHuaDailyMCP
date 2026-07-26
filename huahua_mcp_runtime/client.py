@@ -114,6 +114,7 @@ def _translate_transport_error(error: Exception) -> None:
         status_code = error.response.status_code
         request = error.response.request
         safe_validation_routes = {
+            ("POST", "/api/agent/request"),
             ("POST", "/api/quant/snapshots"),
             ("GET", "/api/quant/strategy-context"),
             ("GET", "/api/market/index-metrics"),

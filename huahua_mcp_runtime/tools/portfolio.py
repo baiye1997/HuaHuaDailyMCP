@@ -188,6 +188,9 @@ async def get_records(include_transactions: bool = False) -> dict:
       - cumulativeProfit: 累计收益（持有收益 + 已实现收益，含落袋；不代表用户所有平台/历史交易的完整累计）
     - dataUpdatedAt: 云端实时同步主数据的最后更新时间（UTC），展示给用户让其知晓数据新鲜度
     - strategyPreferences.maxDrawdownLimitPct: 用户设置的组合回撤阈值百分数；0 表示未启用
+    - summary.estimateCompleteness: 当前估值帧可用性。complete=false 表示至少一只持仓
+      没有可用于当日收益的估值帧；timeoutCount>0 时不得把 0 元当成真实零涨跌。
+      staleCount>0 表示服务端返回了可用但陈旧的 last-good 帧。
 
     Args:
         include_transactions: 是否在每条记录中附带原始 transactions。默认 false 以节省上下文。
@@ -284,7 +287,6 @@ async def get_records(include_transactions: bool = False) -> dict:
         # 估算时间（来自后端 gztime 字段）
         if est:
             enriched["estimateTime"] = est.get("gztime", "")
-            enriched["estimateSource"] = est.get("source", "")
 
         # 在途资产（PENDING 买入交易）
         pending_buy_txs = [
@@ -330,6 +332,9 @@ async def get_records(include_transactions: bool = False) -> dict:
     attributable_count = 0
     updated_count = 0
     pending_attribution_count = 0
+    estimate_available_count = 0
+    estimate_timeout_count = 0
+    estimate_stale_count = 0
     for f in holdings:
         total_market_value = _r2(total_market_value + f.get("marketValue", 0))
         total_cost = _r2(total_cost + f.get("costTotal", 0))
@@ -345,6 +350,13 @@ async def get_records(include_transactions: bool = False) -> dict:
                 updated_count += 1
         elif f.get("estimateSource") == "official_published":
             pending_attribution_count += 1
+        if f.get("estimateAvailable"):
+            estimate_available_count += 1
+            if f.get("estimateStale"):
+                estimate_stale_count += 1
+        if f.get("estimateSource") == "timeout":
+            estimate_timeout_count += 1
+    estimate_unavailable_count = len(holdings) - estimate_available_count
     total_holding_return_rate = _ratio_pct(total_holding_profit, total_cost)
     today_profit_rate = _ratio_pct(total_today_profit, total_day_base_market_value)
 
@@ -374,6 +386,14 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "updatedCount": updated_count,
                 "pendingAttributionCount": pending_attribution_count,
                 "complete": pending_attribution_count == 0,
+            },
+            "estimateCompleteness": {
+                "totalCount": len(holdings),
+                "availableCount": estimate_available_count,
+                "unavailableCount": estimate_unavailable_count,
+                "timeoutCount": estimate_timeout_count,
+                "staleCount": estimate_stale_count,
+                "complete": estimate_unavailable_count == 0,
             },
         },
         "snapshotSummary": snapshot_summary,

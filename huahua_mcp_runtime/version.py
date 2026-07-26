@@ -1,6 +1,6 @@
 """Public runtime version and release location for HuahuaDaily MCP."""
 
-__version__ = "2.6.1"
+__version__ = "2.7.0"
 
 PUBLIC_REPOSITORY_URL = "https://github.com/baiye1997/HuaHuaDailyMCP"
 PUBLIC_VERSION_SOURCE_URL = (

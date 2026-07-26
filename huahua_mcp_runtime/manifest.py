@@ -8,6 +8,7 @@ from .version import __version__
 def build_tool_manifest(
     official_api: str,
     update_status: dict[str, Any] | None = None,
+    backend_compatibility: dict[str, Any] | None = None,
 ) -> dict:
     """
     返回本 MCP 服务的能力边界、认证方式和建议调用顺序。
@@ -30,6 +31,10 @@ def build_tool_manifest(
             "header": "Authorization: AgentToken <token>",
         },
         "api_base": official_api,
+        "backendCompatibility": backend_compatibility or {
+            "status": "not_checked",
+            "compatible": None,
+        },
         "capabilities": {
             "profile": ["get_current_user"],
             "portfolio": [
@@ -125,7 +130,8 @@ def build_tool_manifest(
         },
         "safety": {
             "direct_trading": False,
-            "trade_flow": "request_transaction 只创建待确认信号，必须由用户在 App 内确认。",
+            "trade_flow": "request_transaction 支持买入金额、卖出金额/份额和精确分组，只创建待确认信号，必须由用户在 App 内确认。",
+            "trade_request_idempotency": "同一交易或导入请求重试时复用 client_request_id；服务端按当前用户在 7 天窗口内去重。",
             "personal_report_write": True,
             "quant_snapshot_write": True,
             "quant_snapshot_write_boundary": "仅归档 token 所属用户的策略观察；真实持仓、组合版本和内容哈希由服务端捕获，不保存建议金额。",
@@ -148,6 +154,7 @@ def build_tool_manifest(
             "personal_report_required_scope": "messages:write",
             "public_report_write": False,
             "cloud_sync_read": "get_records/get_summary/get_raw_sync_data 读取云端实时同步主数据；固定使用结构化组合接口，不读取云端历史备份快照。",
+            "estimate_timeout_handling": "裸 timeout 占位帧不参与当日收益；检查 summary.estimateCompleteness，不能把不可用帧的 0 元当成真实零涨跌。",
             "cloud_sync_write": False,
             "cloud_history_snapshot_write": False,
             "empty_portfolio_restore": "已确认的空组合主数据会被识别为合法可恢复状态，但 MCP 不提供恢复或覆盖写入工具。",

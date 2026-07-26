@@ -4,7 +4,6 @@ import asyncio  # noqa: F401
 import json  # noqa: F401
 import os  # noqa: F401
 import re  # noqa: F401
-import time  # noqa: F401
 from typing import Optional  # noqa: F401
 
 from .binding import bind_runtime
@@ -111,6 +110,7 @@ async def request_import_review(
     import_type: str,
     items: list[dict],
     source_note: str = "Agent screenshot import",
+    client_request_id: str = "",
 ) -> str:
     """
     将 Agent 识别和轻确认后的导入结果发送到 App，复用 App 现有批量导入确认页。
@@ -119,6 +119,7 @@ async def request_import_review(
         import_type: "HOLDINGS"、"WATCHLIST" 或 "TRANSACTIONS"。
         items: 识别结果数组，最多 300 条。
         source_note: 展示给用户的来源说明。
+        client_request_id: 当前用户内幂等 ID；同一导入请求重试时必须复用。
     """
     _require_token()
     normalized_type = (import_type or "").strip().upper()
@@ -134,16 +135,23 @@ async def request_import_review(
         raise ValueError("items 不能为空")
     if len(items) > 300:
         raise ValueError("单次导入请求最多 300 条")
+    normalized_client_request_id = str(client_request_id or "").strip()
+    if normalized_client_request_id and not re.fullmatch(r"[A-Za-z0-9:_-]{1,120}", normalized_client_request_id):
+        raise ValueError("client_request_id 仅支持 1-120 位字母、数字、冒号、下划线或连字符")
     payload_dict = {
         "importType": normalized_type,
         "source": "agent_screenshot",
         "sourceNote": source_note,
-        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "summary": _summarize_import_items(items),
         "items": items,
     }
+    if normalized_client_request_id:
+        payload_dict["client_request_id"] = normalized_client_request_id
     payload = json.dumps(payload_dict, ensure_ascii=False)
     if len(payload.encode("utf-8")) > 1024 * 1024:
         raise ValueError("导入请求体不能超过 1MB，请拆分后发送")
-    await _post("/api/agent/request", {"action_type": action_type, "payload": payload})
+    request_body = {"action_type": action_type, "payload": payload}
+    if normalized_client_request_id:
+        request_body["client_request_id"] = normalized_client_request_id
+    await _post("/api/agent/request", request_body)
     return f"✅ 已发送 {payload_dict['summary']['total']} 条导入结果到 App，请打开花花日记批量确认后导入。"

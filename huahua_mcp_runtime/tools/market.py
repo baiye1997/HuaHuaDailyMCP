@@ -139,7 +139,9 @@ async def get_index_metrics(codes: Optional[list[str]] = None) -> dict:
 
 async def get_indices() -> list:
     """
-    获取主要指数实时数据（上证、深证、创业板、沪深300、纳斯达克等）。
+    获取默认主要指数的便捷报价列表（上证、深证、创业板、沪深300、纳斯达克等）。
+    该兼容工具只返回 quotes，若需要 cacheMeta、repairingCodes、缺失代码和轮询时间，
+    请先调用 get_instrument_catalog，再使用 get_instrument_quotes。
     """
     _require_token()
     catalog = await _get("/api/market/indices/catalog")
@@ -288,8 +290,10 @@ async def calculate_trading_dates(
     confirm_days: int = 1,
 ) -> dict:
     """
-    计算基金申赎的净值日、数据日、确认到账日（T+N 日期推算）。
+    计算基金申赎的净值日、估值反映日、确认到账日（T+N 日期推算）。
     跳过周末和法定节假日，适合辅助用户规划买卖时机。
+    返回的 data_date 是按 nav_date 和 confirm_days 反推的兼容字段，
+    data_date_inferred=true；它不是上游已观察到的官方净值 D 日、公布日或收益归属 G 日。
 
     Args:
         date: 操作日期，格式 "YYYY-MM-DD"
@@ -304,8 +308,10 @@ async def calculate_trading_dates(
     Returns:
         dict 包含：
             nav_date: 净值日（基金以哪天净值计算）
-            data_date: 数据日（净值数据公布日）
+            data_date: 按净值日和确认天数反推的估值反映日
             confirm_date: 确认到账日（份额/资金到账日）
+            data_date_inferred: 恒为 true，表示 data_date 不是上游观测值
+            data_date_basis: 反推公式标识 nav_date_minus_confirm_days_offset
     """
     _require_token()
     validated_date = _validate_date(date)

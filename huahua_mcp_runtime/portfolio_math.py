@@ -235,7 +235,8 @@ def calc_change_profit(shares: float, base_nav: float, change_percent, current_n
 
 
 def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
-    estimate = estimate or {}
+    has_current_estimate = isinstance(estimate, dict) and bool(estimate)
+    estimate = estimate if isinstance(estimate, dict) else {}
     shares = to_float(fund.get("holdingShares"))
     safe_shares = shares if shares > 0 else 0.0
     cost_per_share = to_float(fund.get("holdingCost"))
@@ -273,32 +274,65 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
     total_profit = r2(holding_profit + realized)
     holding_return_rate = ratio_pct(holding_profit, cost_total) if valuation_available else None
 
-    source = str(estimate.get("source") or fund.get("source") or "")
+    source = (
+        str(estimate.get("source") or fund.get("source") or "")
+        if has_current_estimate
+        else "unavailable"
+    )
     official_attribution_date = (
         resolve_official_attribution_date(fund, estimate)
         if source == "official_published"
         else ""
     )
-    displayed_day_attributable = source != "reset" and (
+    unavailable_sources = {"reset", "timeout", "unavailable"}
+    current_estimated_nav = to_float(estimate.get("estimatedNav") or estimate.get("nav"))
+    current_previous_nav = to_float(estimate.get("prev_dwjz") or estimate.get("prevNav"))
+    current_change_percent = estimate.get("estimatedChangePercent")
+    if current_change_percent is None:
+        current_change_percent = estimate.get("gszzl")
+    parsed_change_percent = (
+        to_float(str(current_change_percent).replace("%", ""), float("nan"))
+        if current_change_percent is not None and not isinstance(current_change_percent, bool)
+        else float("nan")
+    )
+    has_valid_change_percent = math.isfinite(parsed_change_percent)
+    estimate_available = has_current_estimate and source not in unavailable_sources and (
+        current_previous_nav > 0
+        and (current_estimated_nav > 0 or has_valid_change_percent)
+    )
+    displayed_day_attributable = estimate_available and (
         source != "official_published" or bool(official_attribution_date)
     )
-    estimated_nav = to_float(estimate.get("estimatedNav") or estimate.get("nav") or fund.get("estimatedNav"))
+    estimated_nav = current_estimated_nav or to_float(fund.get("estimatedNav"))
     if estimated_nav <= 0:
         estimated_nav = 0.0
-    previous_nav = to_float(estimate.get("prev_dwjz") or estimate.get("prevNav") or fund.get("prevNav"))
-    estimated_change_percent = estimate.get("estimatedChangePercent")
-    if estimated_change_percent is None:
-        estimated_change_percent = estimate.get("gszzl")
-    if estimated_change_percent is None:
-        estimated_change_percent = fund.get("estimatedChangePercent")
+    estimated_change_percent = (
+        current_change_percent
+        if current_change_percent is not None
+        else fund.get("estimatedChangePercent")
+    )
+    estimate_freshness = str(
+        estimate.get("freshness")
+        or ("stale" if estimate.get("stale") is True else "")
+        or (fund.get("estimateFreshness") if has_current_estimate else "")
+        or ""
+    )
+    estimate_stale = estimate_available and (
+        estimate.get("stale") is True or estimate_freshness == "stale"
+    )
     today_profit = (
         0.0
         if source == "reset" or not displayed_day_attributable
-        else calc_change_profit(safe_shares, previous_nav, estimated_change_percent, estimated_nav)
+        else calc_change_profit(
+            safe_shares,
+            current_previous_nav,
+            current_change_percent,
+            current_estimated_nav,
+        )
     )
     day_base_market_value = (
-        r2(safe_shares * previous_nav)
-        if source != "reset" and displayed_day_attributable and safe_shares > 0 and previous_nav > 0
+        r2(safe_shares * current_previous_nav)
+        if displayed_day_attributable and safe_shares > 0 and current_previous_nav > 0
         else 0.0
     )
 
@@ -337,4 +371,8 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
         "estimatedNav": estimated_nav if estimated_nav > 0 else None,
         "estimatedChangePercent": estimated_change_percent,
         "displayedDayAttributable": displayed_day_attributable,
+        "estimateSource": source,
+        "estimateAvailable": estimate_available,
+        "estimateFreshness": estimate_freshness or None,
+        "estimateStale": estimate_stale,
     }

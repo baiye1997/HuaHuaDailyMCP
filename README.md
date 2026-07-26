@@ -242,8 +242,9 @@ clawhub install huahua-daily
 - 若 `get_sync_meta` / `get_raw_sync_data.meta` 返回 `empty_portfolio_confirmed=true` 且 `has_restorable_sync_payload=true`，表示这是用户在 App 确认过的空组合主数据，不是云端损坏。
 - 查询某只基金行情：已知代码直接 get_item_estimate；未知代码先 search_item。
 - 对比单只基金不同行情源：调用 get_fund_source_previews。
-- 用户想买入/卖出时，必须先确认基金名称、代码、金额、分组，再调用 request_transaction。
+- 用户想买入/卖出时，必须先确认基金名称、代码、金额或份额、卖出模式和分组，再调用 request_transaction；指定分组时优先传稳定的 `group_id`。
 - request_transaction 只发送待确认信号，必须明确告知用户需要打开 App 确认。
+- 7 天内重试同一交易或导入请求时必须复用 `client_request_id`，服务端会保留该窗口内的幂等记录，避免产生重复待确认 Banner；超过窗口请生成新的请求 ID。
 - 用户明确要求生成个人组合报告时，可以基于其授权读取的持仓、交易和行情数据生成，并调用 submit_personal_strategy_report 投递到当前 token 用户自己的报告中心。
 - submit_personal_strategy_report 需要 `messages:write` scope；如需同一个 token 同时读取持仓并投递个人报告，使用 `agent:full messages:write`。默认 `agent:full` 不含个人报告写入。
 - submit_personal_strategy_report 只能写当前 Agent Token 所属用户，不能广播，不能指定 user_id，不得声称发送给所有用户。
@@ -255,6 +256,7 @@ clawhub install huahua-daily
 - 数据来自云端实时同步主数据，MCP 固定读取结构化组合接口，不读取旧同步大包或云端历史备份快照。若用户刚在 App 操作，提醒其确认实时同步已完成再查询。
 - `get_records` 的市值/持有收益只按 App 云端主数据中的官方 `lastNav` 计算；盘中估算只用于今日收益，不用于持仓市值。
 - QDII/T+N 最新官方净值缺少可靠 G 日时，`todayProfit` 和归属日分母不会提前计入；检查 `summary.displayedDayCompleteness.complete` 与 `pendingAttributionCount`，不得把残缺组合描述成完整当日收益。
+- `summary.estimateCompleteness.complete=false` 或 `timeoutCount>0` 表示至少一只持仓缺少可用估值帧；此时 0 元不是已确认的真实零涨跌。`staleCount>0` 表示使用了可用但陈旧的 last-good 帧。
 - 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
@@ -269,7 +271,7 @@ clawhub install huahua-daily
 认证与自检：
 
 - `set_token(token)`：运行时设置 Agent Token。
-- `get_tool_manifest()`：返回能力边界、认证方式、安全说明和 MCP 启动预检结果。Agent 在每个会话首次使用 HuahuaDaily 时调用；若 `runtime.updateCheck.updateAvailable=true`，应按 `updateInstructions` 提示用户更新并重启 MCP。
+- `get_tool_manifest()`：返回能力边界、认证方式、安全说明、MCP 更新预检和 `backendCompatibility` 后端量化契约握手。Agent 在每个会话首次使用 HuahuaDaily 时调用；若 `runtime.updateCheck.updateAvailable=true`，应按 `updateInstructions` 提示用户更新并重启 MCP；若 `backendCompatibility.compatible=false`，不要继续调用量化写入工具。
 - `get_current_user()`：读取当前账号和会员信息。
 
 云端实时同步与持仓：
@@ -294,7 +296,7 @@ clawhub install huahua-daily
 - `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。MCP 默认 `view="compact"`，保留分析就绪状态、风控、执行、全市场聚合与主基准逐指数明细；需要完整份额、成本、官方净值、全部启用指数明细和下钻引用时使用 `view="full"`。两种视图复用同一 canonical Context 缓存。默认轮询池只读缓存，非默认指数按需由后端读穿；历史模式使用可按 `as_of_date` 截止的日线来源。不返回原始日序列，也不要求 Agent 自行计算。
 - `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。分析某个资产分组时传 `group_id`，服务端会校验并保存方案起点。`strategy_type` 支持固定比例 `target_rebalance` 和止盈止损再买入 `threshold_reentry`；固定比例的调仓频率支持 `none/daily/weekly/monthly/quarterly`。
 - `get_portfolio_backtest(run_id, trade_offset=0, trade_limit=100, max_series_points=300)`：按 `run_portfolio_backtest` 返回的 `run_id` 读取已保存结果；走势最多抽样 500 点，交易按 offset/limit 分页，使用 `nextTradeOffset` 继续读取，适合审计长周期结果。
-- `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, strategy_version="", data_cutoff_at="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。
+- `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, data_cutoff_at, strategy_version="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察；`data_cutoff_at` 必填。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。
 - `get_quant_snapshots(strategy_id="", latest_only=false, limit=50, cursor="", start_date="", end_date="", snapshot_id=0, group_id="")`：分页读取不可变信号档案；传 `group_id` 只读取以该分组保存的判断，旧快照归入全部持仓；列表返回摘要，传 `snapshot_id` 读取完整内容。
 - `get_quant_snapshot_review(snapshot_id, benchmark_code="000300")`：读取与 App 相同的不可变信号快照 T1/T7/T20/T60 权威复盘。
 
@@ -326,7 +328,7 @@ clawhub install huahua-daily
 - `get_fund_flow()`：资金流向数据（需 PRO 会员）；`sectorFlow` 非空时同时提供 industry 与 concept，分类由 last-good 补齐时返回 `categoryFreshness`、`categoryPolledAt`。
 - `get_indices()`
 - `get_benchmark_history(code="sh000300")`
-- `calculate_trading_dates(date, time_mode="PRE_MARKET", confirm_days=1)`
+- `calculate_trading_dates(date, time_mode="PRE_MARKET", confirm_days=1)`：返回的 `data_date` 是按 `nav_date` 与 `confirm_days` 反推的估值反映日，并以 `data_date_inferred=true`、`data_date_basis=nav_date_minus_confirm_days_offset` 公示来源；它不是上游已观察到的官方净值 D 日、公布日或收益归属 G 日。
 - `get_next_trading_day(date)`
 - `get_fund_profile(code)`：基金画像（综合信息）。
 - `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只；非法代码直接报错；返回 `data`、`complete`、`missingCodes`、`timedOut`，服务端总预算 20 秒。
@@ -340,7 +342,7 @@ clawhub install huahua-daily
 
 交易请求：
 
-- `request_transaction(item_code, item_name, record_type, amount, date="", note="", group_name="")`
+- `request_transaction(item_code, item_name, record_type, amount=0, date="", note="", group_name="", group_id="", sell_mode="AMOUNT", shares=0, client_request_id="")`：买入使用 `amount`；卖出明确选择 `AMOUNT` 或 `SHARES`。指定分组优先传 `group_id`；7 天内重试必须复用 `client_request_id`。
 - `get_agent_requests()`
 - `update_agent_request(request_id, status)`
 
@@ -352,7 +354,7 @@ clawhub install huahua-daily
 
 - `import_holding_screenshots(image_paths?, images_base64?, import_type="HOLDINGS")`：识别持仓/自选截图，返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 可选 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率）。
 - `import_transaction_screenshots(image_paths?, images_base64?)`：识别交易流水截图，返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
-- `request_import_review(import_type, items, source_note?)`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`。
+- `request_import_review(import_type, items, source_note="Agent screenshot import", client_request_id="")`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`；7 天内重试必须复用 `client_request_id`。
 
 社区与公告：
 

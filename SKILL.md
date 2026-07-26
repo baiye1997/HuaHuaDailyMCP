@@ -34,6 +34,7 @@ get_tool_manifest()
 用途：
 - 确认可用工具、认证方式、安全边界。
 - 检查 MCP 启动时生成的 `runtime.updateCheck`。若 `updateAvailable=true`，先告知用户当前版本、最新版本和返回的 `updateInstructions`；不要自行安装或覆盖用户环境。`unavailable` 只表示版本检查暂不可用，不阻断其他工具。
+- 检查 `backendCompatibility`。若 `compatible=false`，说明后端量化契约与当前 MCP 不兼容，不要继续调用量化写入工具；`unavailable` 只表示握手暂不可用。
 - 不访问用户数据，不消耗行情请求。
 
 Token 缺失、无效或过期时，提示用户在 App「小窝 / 设置 → Agent 访问令牌」重新生成，并配置环境变量 `HUAHUA_AGENT_TOKEN`。
@@ -70,6 +71,7 @@ get_summary()
 - `todayProfitRate`：今日/昨日收益率，口径为 `todayProfit / totalDayBaseMarketValue × 100%`，不要用当前总市值重算。
 - `totalDayBaseMarketValue`：`todayProfitRate` 使用的归属日组合期初市值。
 - `displayedDayCompleteness`：组合当日收益完整度。若 `complete=false` 或 `pendingAttributionCount>0`，说明至少一只 QDII/T+N 最新官方净值尚无可靠 G 日；现有 `todayProfit` / `todayProfitRate` 仅覆盖可归属基金，不得表述为完整组合当日收益。
+- `estimateCompleteness`：当前估值帧可用性。若 `complete=false` 或 `timeoutCount>0`，至少一只持仓缺少可用估值帧，0 元不能表述为真实零涨跌；`staleCount>0` 表示使用了可用但陈旧的 last-good 帧。
 - `totalHoldingProfit`：持有收益。
 - `totalHoldingReturnRate`：持有收益率。
 - `cumulativeProfit`：累计收益；这是本 App 已记录交易推导的累计，仅在用户明确询问历史累计或该字段时使用。
@@ -565,6 +567,10 @@ calculate_trading_dates({
 - `time_mode`: `PRE_MARKET` 表示收盘前，`POST_MARKET` 表示收盘后。
 - `confirm_days`: T+1/T+2/T+3 等，未知时先用 `get_fund_fees(code)` 获取 `confirm_days`；该工具也返回 `daily_purchase_limit` 等限购字段。
 
+返回口径：
+- `data_date` 是按 `nav_date` 与 `confirm_days` 反推的估值反映日，返回中会明确给出 `data_date_inferred=true` 和 `data_date_basis=nav_date_minus_confirm_days_offset`。
+- 它不是上游已观察到的官方净值 D 日、公布日或收益归属 G 日；不得把它当作已确认日期向用户陈述。
+
 ## 5. 交易请求
 
 ### 5.1 用户想买入/卖出
@@ -573,9 +579,10 @@ calculate_trading_dates({
 - 基金代码。
 - 基金名称。
 - 买入或卖出。
-- 金额。
+- 买入金额；卖出时明确按金额还是按份额，并确认对应数值。
 - 日期，可留空让 App 使用今日。
-- 分组名，如果用户指定了账户/分组。
+- 分组 ID 和名称；如果用户指定了账户/分组，先从 `get_records` 取稳定的 `groupId`。
+- `client_request_id`；7 天内重试同一逻辑请求时必须复用，超过窗口请生成新的请求 ID。
 
 发送请求：
 
@@ -587,12 +594,17 @@ request_transaction({
   "amount": 1000,
   "date": "2026-05-13",
   "note": "Agent 发起",
-  "group_name": "我的账户"
+  "group_name": "我的账户",
+  "group_id": "group-id",
+  "client_request_id": "tx:110022:20260513:buy:1"
 })
 ```
 
 规则：
 - `record_type` 只能是 `BUY` 或 `SELL`。
+- 卖出使用 `sell_mode="AMOUNT"` 配合 `amount`，或 `sell_mode="SHARES"` 配合 `shares`。
+- 指定分组时优先传 `group_id`；精确匹配失败会由 App 让用户选择，不会静默落到其他持仓。
+- 7 天内重试同一请求时复用 `client_request_id`，不要重新生成；服务端会在该窗口内保留幂等记录。
 - 如果基金代码来自搜索推断，必须先让用户确认。
 - 调用后必须告诉用户：“请求已发送，请打开花花日记 App 确认后才会生效。”
 - 不要说“已买入”或“已卖出”。
@@ -763,7 +775,8 @@ import_transaction_screenshots({
 request_import_review({
   "import_type": "HOLDINGS",
   "items": [...],
-  "source_note": "Agent 识别持仓截图"
+  "source_note": "Agent 识别持仓截图",
+  "client_request_id": "import:holdings:20260513:1"
 })
 ```
 
@@ -773,7 +786,8 @@ request_import_review({
 request_import_review({
   "import_type": "WATCHLIST",
   "items": [...],
-  "source_note": "Agent 识别自选截图"
+  "source_note": "Agent 识别自选截图",
+  "client_request_id": "import:watchlist:20260513:1"
 })
 ```
 
@@ -783,7 +797,8 @@ request_import_review({
 request_import_review({
   "import_type": "TRANSACTIONS",
   "items": [...],
-  "source_note": "Agent 识别交易记录截图"
+  "source_note": "Agent 识别交易记录截图",
+  "client_request_id": "import:transactions:20260513:1"
 })
 ```
 
@@ -791,6 +806,7 @@ request_import_review({
 - `import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`。
 - `items` 最多 300 条。
 - 请求体最多 1MB。
+- 7 天内重试同一导入请求时复用 `client_request_id`，避免重复确认页；超过窗口请生成新的请求 ID。
 
 调用后必须告诉用户：
 - “已发送到 App，请打开花花日记批量确认。”

@@ -12,6 +12,12 @@ from ..update_check import get_mcp_update_status
 
 _RUNTIME_DEPENDENCIES = ("_OFFICIAL_API", "_clear_session_caches", "_get", "_require_token", "_session", "build_tool_manifest")
 
+_EXPECTED_QUANT_SCHEMA_VERSION = "quant-v2"
+_EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION = "quant_strategy_context.v2"
+_BACKEND_COMPATIBILITY_SUCCESS_TTL = 6 * 60 * 60
+_BACKEND_COMPATIBILITY_FAILURE_TTL = 15 * 60
+_backend_compatibility_cache: dict = {"value": None, "expires_at": 0.0}
+
 if False:  # pragma: no cover - populated by bind() before tool registration
     _OFFICIAL_API = None
     _clear_session_caches = None
@@ -22,7 +28,9 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 
 def bind(runtime_globals: dict) -> None:
+    global _backend_compatibility_cache
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
+    _backend_compatibility_cache = {"value": None, "expires_at": 0.0}
 
 
 async def set_token(token: str) -> str:
@@ -42,11 +50,69 @@ async def get_tool_manifest() -> dict:
     """
     返回本 MCP 服务的能力边界、认证方式和建议调用顺序。
     MCP 启动时会后台检查公开仓库版本；首次调用最多等待该检查 2 秒。
+    同时以最多 2 秒读取后端量化能力握手，报告当前契约是否兼容。
     成功结果在进程内缓存 6 小时，失败结果 15 分钟后重试。
     更新检查失败只会标记 unavailable，不影响能力发现和后续业务工具。
     """
-    update_status = await get_mcp_update_status()
-    return build_tool_manifest(_OFFICIAL_API, update_status)
+    update_status, backend_compatibility = await asyncio.gather(
+        get_mcp_update_status(),
+        _get_backend_compatibility(),
+    )
+    return build_tool_manifest(_OFFICIAL_API, update_status, backend_compatibility)
+
+
+async def _get_backend_compatibility() -> dict:
+    now = time.monotonic()
+    cached = _backend_compatibility_cache["value"]
+    if cached is not None and now < _backend_compatibility_cache["expires_at"]:
+        return cached
+
+    expected = {
+        "schemaVersion": _EXPECTED_QUANT_SCHEMA_VERSION,
+        "strategyContextSchemaVersion": _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION,
+    }
+    try:
+        capabilities = await asyncio.wait_for(_get("/api/quant/capabilities"), timeout=2)
+    except Exception:
+        result = {
+            "status": "unavailable",
+            "compatible": None,
+            "expected": expected,
+            "reported": None,
+        }
+        _backend_compatibility_cache["value"] = result
+        _backend_compatibility_cache["expires_at"] = now + _BACKEND_COMPATIBILITY_FAILURE_TTL
+        return result
+    if not isinstance(capabilities, dict):
+        result = {
+            "status": "invalid",
+            "compatible": False,
+            "expected": expected,
+            "reported": None,
+        }
+        _backend_compatibility_cache["value"] = result
+        _backend_compatibility_cache["expires_at"] = now + _BACKEND_COMPATIBILITY_FAILURE_TTL
+        return result
+    features = capabilities.get("features")
+    compatible = (
+        capabilities.get("schemaVersion") == _EXPECTED_QUANT_SCHEMA_VERSION
+        and capabilities.get("strategyContextSchemaVersion") == _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION
+        and isinstance(features, dict)
+        and all(features.get(name) is True for name in (
+            "portfolioPerformance",
+            "backtests",
+            "quantSnapshots",
+        ))
+    )
+    result = {
+        "status": "compatible" if compatible else "incompatible",
+        "compatible": compatible,
+        "expected": expected,
+        "reported": capabilities,
+    }
+    _backend_compatibility_cache["value"] = result
+    _backend_compatibility_cache["expires_at"] = now + _BACKEND_COMPATIBILITY_SUCCESS_TTL
+    return result
 
 
 async def get_current_user() -> dict:
