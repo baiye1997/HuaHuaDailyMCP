@@ -1,6 +1,7 @@
 ---
 name: huahua-daily
 description: Use HuahuaDaily MCP for authorized portfolio and transaction queries, fund and market data, strategy backtests and quant snapshots, community actions, screenshot recognition, and App-confirmed trade or import requests. Trigger when users ask about their HuahuaDaily holdings or cloud sync, request fund or market analysis through HuahuaDaily, run or review portfolio backtests, save or review strategy snapshots, use HuahuaDaily community features, or send transactions/imports for App confirmation.
+version: 2.8.0
 ---
 
 # 花花日记助手（HuahuaDaily）
