@@ -1,6 +1,7 @@
 """Input and import validation helpers used by MCP tools."""
 
 import base64
+import math
 import mimetypes
 import os
 import re
@@ -49,13 +50,20 @@ def normalize_data_source_mode(value) -> str:
 
 
 def validate_amount(amount: float) -> float:
-    if not isinstance(amount, (int, float)):
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or not math.isfinite(float(amount))
+    ):
         raise ValueError(f"金额必须是数字，收到：{amount}")
     if amount <= 0:
         raise ValueError(f"金额必须大于 0，收到：{amount}")
     if amount > 100_000_000:
         raise ValueError(f"金额过大：{amount}，请确认是否正确")
-    return r2(amount)
+    rounded = r2(float(amount))
+    if rounded <= 0:
+        raise ValueError("金额精确到分后必须至少为 0.01")
+    return rounded
 
 
 def validate_date(date_str: str) -> str:

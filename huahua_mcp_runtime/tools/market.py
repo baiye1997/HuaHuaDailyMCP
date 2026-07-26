@@ -36,6 +36,7 @@ async def get_overview() -> dict:
     """
     获取整体概览数据，包括主要指数涨跌、热门板块、涨跌排行。
     适合快速了解今日整体情况。
+    各数据块独立降级；单个接口失败时对应字段返回 error，不拖垮其余概览。
     """
     _require_token()
     async def safe_get(name: str, path: str, params: dict = None):
@@ -44,19 +45,40 @@ async def get_overview() -> dict:
         except Exception as exc:
             return name, {"error": str(exc)}
 
-    catalog = await _get("/api/market/indices/catalog")
-    default_codes = catalog.get("defaultCodes", []) if isinstance(catalog, dict) else []
-    default_codes = [str(code) for code in default_codes if code][:10]
-    results = await asyncio.gather(
-        safe_get("status", "/api/market/status"),
-        safe_get("todayRank", "/api/fund/today-rank"),
-        safe_get("sectorWind", "/api/market/sector-wind"),
-        safe_get("yesterdayRank", "/api/market/yesterday-rank"),
-        safe_get("indices", "/api/market/indices/latest", params={"codes": ",".join(default_codes)}) if default_codes else asyncio.sleep(0, result=("indices", {"quotes": []})),
+    catalog_task = asyncio.create_task(
+        safe_get("instrumentCatalog", "/api/market/indices/catalog")
     )
-    overview = {name: value for name, value in results}
-    overview["instrumentCatalog"] = catalog
-    return overview
+    independent_tasks = [
+        asyncio.create_task(safe_get("status", "/api/market/status")),
+        asyncio.create_task(safe_get("todayRank", "/api/fund/today-rank")),
+        asyncio.create_task(safe_get("sectorWind", "/api/market/sector-wind")),
+        asyncio.create_task(safe_get("yesterdayRank", "/api/market/yesterday-rank")),
+    ]
+    tasks = [catalog_task, *independent_tasks]
+    try:
+        _, catalog = await catalog_task
+        default_codes = catalog.get("defaultCodes", []) if isinstance(catalog, dict) else []
+        default_codes = [str(code) for code in default_codes if code][:10]
+        indices_coro = (
+            safe_get(
+                "indices",
+                "/api/market/indices/latest",
+                params={"codes": ",".join(default_codes)},
+            )
+            if default_codes
+            else asyncio.sleep(0, result=("indices", {"quotes": []}))
+        )
+        indices_task = asyncio.create_task(indices_coro)
+        tasks.append(indices_task)
+        results = await asyncio.gather(*independent_tasks, indices_task)
+        overview = {name: value for name, value in results}
+        overview["instrumentCatalog"] = catalog
+        return overview
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def get_sector_wind() -> dict:
@@ -168,6 +190,7 @@ async def get_night_estimate(codes: list[str], force: bool = False, view: str = 
     获取QDII基金的夜间实时估值（美股/港股盘后/盘前交易时段）。
     返回每只基金的盘后涨跌幅、持仓穿透明细、汇率变动等数据。
     仅在美股交易时段（北京时间夜间）数据有效，需要会员权限。
+    超过 50 个代码或传入未知 view 会直接报错，不会静默截断或改用默认值。
 
     Args:
         codes: 基金代码列表，如 ["016665", "018147"]，最多 50 个
@@ -175,24 +198,24 @@ async def get_night_estimate(codes: list[str], force: bool = False, view: str = 
         view: forecast（预测口径）或 last_close（上一收盘快照口径）
     """
     _require_token()
+    if len(codes) > 50:
+        raise ValueError("codes 最多支持 50 只基金")
+    if view not in {"forecast", "last_close"}:
+        raise ValueError("view 仅支持 forecast 或 last_close")
     validated_codes = []
     seen = set()
-    for code in codes[:50]:
-        try:
-            normalized = _validate_fund_code(code)
-            if normalized not in seen:
-                validated_codes.append(normalized)
-                seen.add(normalized)
-        except ValueError:
-            continue
+    for code in codes:
+        normalized = _validate_fund_code(code)
+        if normalized not in seen:
+            validated_codes.append(normalized)
+            seen.add(normalized)
     if not validated_codes:
         return {"status": "empty", "items": []}
     code_str = ",".join(validated_codes)
     params = {"codes": code_str}
     if force:
         params["force"] = "true"
-    if view in {"forecast", "last_close"}:
-        params["view"] = view
+    params["view"] = view
     return await _get("/api/market/night-est", params=params)
 
 

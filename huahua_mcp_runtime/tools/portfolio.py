@@ -335,6 +335,9 @@ async def get_records(include_transactions: bool = False) -> dict:
     estimate_available_count = 0
     estimate_timeout_count = 0
     estimate_stale_count = 0
+    estimate_unavailable_codes = []
+    estimate_timeout_codes = []
+    estimate_stale_codes = []
     for f in holdings:
         total_market_value = _r2(total_market_value + f.get("marketValue", 0))
         total_cost = _r2(total_cost + f.get("costTotal", 0))
@@ -354,8 +357,12 @@ async def get_records(include_transactions: bool = False) -> dict:
             estimate_available_count += 1
             if f.get("estimateStale"):
                 estimate_stale_count += 1
+                estimate_stale_codes.append(f.get("code"))
+        else:
+            estimate_unavailable_codes.append(f.get("code"))
         if f.get("estimateSource") == "timeout":
             estimate_timeout_count += 1
+            estimate_timeout_codes.append(f.get("code"))
     estimate_unavailable_count = len(holdings) - estimate_available_count
     total_holding_return_rate = _ratio_pct(total_holding_profit, total_cost)
     today_profit_rate = _ratio_pct(total_today_profit, total_day_base_market_value)
@@ -393,6 +400,9 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "unavailableCount": estimate_unavailable_count,
                 "timeoutCount": estimate_timeout_count,
                 "staleCount": estimate_stale_count,
+                "unavailableCodes": estimate_unavailable_codes,
+                "timeoutCodes": estimate_timeout_codes,
+                "staleCodes": estimate_stale_codes,
                 "complete": estimate_unavailable_count == 0,
             },
         },

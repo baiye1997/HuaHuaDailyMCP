@@ -2,6 +2,7 @@
 
 import asyncio  # noqa: F401
 import json  # noqa: F401
+import math
 import os  # noqa: F401
 import re  # noqa: F401
 import time  # noqa: F401
@@ -13,12 +14,12 @@ from ..quant_validation import (
     validate_quant_view as _validate_quant_view,
 )
 
-_RUNTIME_DEPENDENCIES = ("_fetch_estimates", "_get", "_normalize_data_source_mode", "_post", "_require_token", "_validate_fund_code")
+_RUNTIME_DEPENDENCIES = ("_fetch_estimates", "_get", "_post", "_require_token", "_validate_fund_code")
+_DATA_SOURCE_MODES = {"huahua", "a", "b", "c"}
 
 if False:  # pragma: no cover - populated by bind() before tool registration
     _fetch_estimates = None
     _get = None
-    _normalize_data_source_mode = None
     _post = None
     _require_token = None
     _validate_fund_code = None
@@ -26,6 +27,44 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
+
+
+def _estimate_frame_available(item: dict) -> bool:
+    if not isinstance(item, dict) or not item:
+        return False
+    source = str(item.get("source") or "").strip().lower()
+    if source in {"reset", "timeout", "unavailable"}:
+        return False
+
+    def to_float(value) -> float:
+        if isinstance(value, bool):
+            return float("nan")
+        try:
+            return float(str(value).replace("%", ""))
+        except (TypeError, ValueError):
+            return float("nan")
+
+    previous_nav = to_float(item.get("prev_dwjz") or item.get("prevNav"))
+    estimated_nav = to_float(item.get("estimatedNav") or item.get("nav"))
+    change_percent = item.get("estimatedChangePercent")
+    if change_percent is None:
+        change_percent = item.get("gszzl")
+    parsed_change_percent = to_float(change_percent)
+    return (
+        math.isfinite(previous_nav)
+        and previous_nav > 0
+        and (
+            (math.isfinite(estimated_nav) and estimated_nav > 0)
+            or math.isfinite(parsed_change_percent)
+        )
+    )
+
+
+def _validate_public_data_source_mode(value, field: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in _DATA_SOURCE_MODES:
+        raise ValueError(f"{field} 仅支持 huahua、a、b 或 c")
+    return normalized
 
 
 async def search_item(query: str) -> list:
@@ -70,6 +109,8 @@ async def get_item_estimate(
     适合查询"现在涨了多少""今天净值多少"等日常行情问题，不会附带量化计算。
     结果在同一 session 内缓存 60 秒，与 get_records 共享缓存，无重复网络请求。
     支持新版后端多行情源：default_data_source_mode / data_source_mode_by_code。
+    返回 requestedCodes、missingCodes、invalidCodes、unavailableCodes、timeoutCodes 和 complete；
+    部分失败或不可用占位帧不会伪装成完整结果。
 
     Args:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
@@ -77,25 +118,82 @@ async def get_item_estimate(
         data_source_mode_by_code: 可选，每只基金单独指定行情源模式。
     """
     _require_token()
+    if len(codes) > 50:
+        raise ValueError("codes 最多支持 50 只基金")
+    validated_default_mode = _validate_public_data_source_mode(
+        default_data_source_mode,
+        "default_data_source_mode",
+    )
     # 验证并去重基金代码
     validated_codes = []
+    invalid_codes = []
     seen = set()
-    for code in codes[:50]:
+    for code in codes:
         try:
             normalized = _validate_fund_code(code)
             if normalized not in seen:
                 validated_codes.append(normalized)
                 seen.add(normalized)
         except ValueError:
-            continue  # 跳过无效代码
+            invalid_codes.append(str(code or "").strip())
+    if data_source_mode_by_code is not None and not isinstance(
+        data_source_mode_by_code,
+        dict,
+    ):
+        raise ValueError("data_source_mode_by_code 必须是对象")
+    validated_mode_by_code = {
+        _validate_fund_code(code): _validate_public_data_source_mode(
+            mode,
+            f"data_source_mode_by_code[{code}]",
+        )
+        for code, mode in (data_source_mode_by_code or {}).items()
+    }
+    unexpected_mode_codes = set(validated_mode_by_code) - set(validated_codes)
+    if unexpected_mode_codes:
+        raise ValueError("data_source_mode_by_code 只能包含本次请求的有效基金代码")
     if not validated_codes:
-        return {"data": []}
+        return {
+            "data": [],
+            "requestedCodes": [],
+            "missingCodes": [],
+            "invalidCodes": invalid_codes,
+            "unavailableCodes": [],
+            "timeoutCodes": [],
+            "complete": not invalid_codes,
+        }
     estimate_map = await _fetch_estimates(
         validated_codes,
-        default_data_source_mode=default_data_source_mode,
-        data_source_mode_by_code=data_source_mode_by_code,
+        default_data_source_mode=validated_default_mode,
+        data_source_mode_by_code=validated_mode_by_code,
     )
-    return {"data": list(estimate_map.values())}
+    normalized_map = {
+        str(code): value
+        for code, value in estimate_map.items()
+    }
+    missing_codes = [code for code in validated_codes if code not in normalized_map]
+    unavailable_codes = [
+        code
+        for code in validated_codes
+        if code in normalized_map and not _estimate_frame_available(normalized_map[code])
+    ]
+    timeout_codes = [
+        code
+        for code in unavailable_codes
+        if str(normalized_map[code].get("source") or "").strip().lower() == "timeout"
+    ]
+    return {
+        "data": [
+            normalized_map[code]
+            for code in validated_codes
+            if code in normalized_map
+        ],
+        "requestedCodes": validated_codes,
+        "missingCodes": missing_codes,
+        "invalidCodes": invalid_codes,
+        "unavailableCodes": unavailable_codes,
+        "timeoutCodes": timeout_codes,
+        "complete": not missing_codes and not invalid_codes and not unavailable_codes,
+    }
 
 
 async def get_fund_source_previews(code: str) -> dict:
@@ -161,9 +259,13 @@ async def get_fund_timeline(code: str, source_mode: str = "huahua") -> list:
     """
     _require_token()
     validated_code = _validate_fund_code(code)
+    validated_source_mode = _validate_public_data_source_mode(
+        source_mode,
+        "source_mode",
+    )
     data = await _get(
         f"/api/fund/today-timeline/{validated_code}",
-        params={"sourceMode": _normalize_data_source_mode(source_mode)},
+        params={"sourceMode": validated_source_mode},
     )
     return data if isinstance(data, list) else []
 
@@ -185,24 +287,42 @@ async def get_batch_fund_fees(codes: list[str]) -> dict:
     """
     批量获取基金费率、申购状态、限购规则。最多 50 个代码。
     适合配合 get_purchase_limit_watchlist 一次性检查限购观察列表。
+    超过 50 个会直接报错，不会静默截断。
 
     Args:
         codes: 6 位基金代码列表。
     """
     _require_token()
+    if len(codes) > 50:
+        raise ValueError("codes 最多支持 50 只基金")
     validated_codes = []
     seen = set()
-    for code in codes[:50]:
-        try:
-            normalized = _validate_fund_code(code)
-            if normalized not in seen:
-                validated_codes.append(normalized)
-                seen.add(normalized)
-        except ValueError:
-            continue
+    for code in codes:
+        normalized = _validate_fund_code(code)
+        if normalized not in seen:
+            validated_codes.append(normalized)
+            seen.add(normalized)
     if not validated_codes:
-        return {"data": {}, "truncated": False, "limit": 50}
-    return await _post("/api/fund/fees/batch", {"codes": validated_codes})
+        return {
+            "data": {},
+            "truncated": False,
+            "limit": 50,
+            "requestedCodes": [],
+            "missingCodes": [],
+            "complete": True,
+        }
+    payload = await _post("/api/fund/fees/batch", {"codes": validated_codes})
+    result = dict(payload) if isinstance(payload, dict) else {}
+    data = result.get("data")
+    data = data if isinstance(data, dict) else {}
+    missing_codes = [code for code in validated_codes if code not in data]
+    result.update({
+        "data": data,
+        "requestedCodes": validated_codes,
+        "missingCodes": missing_codes,
+        "complete": not missing_codes,
+    })
+    return result
 
 
 async def get_fund_period_rank(code: str) -> dict:
@@ -397,25 +517,38 @@ async def get_batch_fund_quant_metrics(
 
 async def get_batch_fund_period_ranks(codes: list[str]) -> dict:
     """
-    批量获取多个项目的近期业绩排名，返回 code → 排名数据的映射。
+    批量获取多个项目的近期业绩排名，code → 排名数据的映射位于 data 字段。
     一次请求处理最多 50 个项目，适合同时查看多个项目的表现对比。
+    超过 50 个会直接报错，不会静默截断。
 
     Args:
         codes: 项目编号列表，如 ["000001", "161725"]，最多 50 个
     """
     _require_token()
+    if len(codes) > 50:
+        raise ValueError("codes 最多支持 50 只基金")
     # 验证并去重基金代码
     validated_codes = []
     seen = set()
-    for code in codes[:50]:
-        try:
-            normalized = _validate_fund_code(code)
-            if normalized not in seen:
-                validated_codes.append(normalized)
-                seen.add(normalized)
-        except ValueError:
-            continue
+    for code in codes:
+        normalized = _validate_fund_code(code)
+        if normalized not in seen:
+            validated_codes.append(normalized)
+            seen.add(normalized)
     if not validated_codes:
-        return {}
+        return {
+            "data": {},
+            "requestedCodes": [],
+            "missingCodes": [],
+            "complete": True,
+        }
     payload = await _post("/api/fund/period-rank/batch", {"codes": validated_codes})
-    return payload.get("data", {}) if isinstance(payload, dict) else {}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    data = data if isinstance(data, dict) else {}
+    missing_codes = [code for code in validated_codes if code not in data]
+    return {
+        "data": data,
+        "requestedCodes": validated_codes,
+        "missingCodes": missing_codes,
+        "complete": not missing_codes,
+    }

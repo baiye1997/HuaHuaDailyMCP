@@ -256,7 +256,7 @@ clawhub install huahua-daily
 - 数据来自云端实时同步主数据，MCP 固定读取结构化组合接口，不读取旧同步大包或云端历史备份快照。若用户刚在 App 操作，提醒其确认实时同步已完成再查询。
 - `get_records` 的市值/持有收益只按 App 云端主数据中的官方 `lastNav` 计算；盘中估算只用于今日收益，不用于持仓市值。
 - QDII/T+N 最新官方净值缺少可靠 G 日时，`todayProfit` 和归属日分母不会提前计入；检查 `summary.displayedDayCompleteness.complete` 与 `pendingAttributionCount`，不得把残缺组合描述成完整当日收益。
-- `summary.estimateCompleteness.complete=false` 或 `timeoutCount>0` 表示至少一只持仓缺少可用估值帧；此时 0 元不是已确认的真实零涨跌。`staleCount>0` 表示使用了可用但陈旧的 last-good 帧。
+- `summary.estimateCompleteness.complete=false` 或 `timeoutCount>0` 表示至少一只持仓缺少可用估值帧；此时 0 元不是已确认的真实零涨跌。用 `unavailableCodes` / `timeoutCodes` 定位基金；`staleCount>0` 与 `staleCodes` 表示使用了可用但陈旧的 last-good 帧。
 - 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
@@ -305,16 +305,16 @@ clawhub install huahua-daily
 市场与基金：
 
 - `search_item(query)`
-- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`
+- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `huahua/a/b/c`，拼写错误会直接报错；检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`，不能把部分返回或 timeout 占位帧当成完整行情。
 - `get_fund_source_previews(code)`：单只基金 huahua/a/b/c 多行情源估算预览，用于解释或选择数据源。
 - `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
 - `get_item_history(code)`
 - `get_item_dividends(code)`
 - `get_fund_timeline(code, source_mode="huahua")`
 - `get_fund_fees(code)`：确认天数、申购状态、QDII/限大额日累计限购金额等交易规则。
-- `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只。
+- `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只；检查 `complete` 和 `missingCodes`。
 - `get_fund_period_rank(code)`
-- `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只。
+- `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只；结果位于 `data`，检查 `complete` 和 `missingCodes`。
 - `get_night_estimate(codes, force=false, view="forecast")`：QDII 基金夜间实时估值，含持仓穿透、汇率变动（需会员）。`force=true` 跳过服务端缓存；`view` 可为 `forecast` 或 `last_close`。
 - `get_night_watchlist()`：读取用户在 App 夜盘估值页手动添加的基金代码列表（来自云端实时同步主数据），通常作为 `get_night_estimate` 的前置工具，免去用户手动报代码。
 - `get_purchase_limit_watchlist()`：读取用户在 App 限购观察页保存的基金列表；可配合 `get_fund_fees` 检查申购状态和限购额度。
@@ -344,7 +344,7 @@ clawhub install huahua-daily
 
 - `request_transaction(item_code, item_name, record_type, amount=0, date="", note="", group_name="", group_id="", sell_mode="AMOUNT", shares=0, client_request_id="")`：买入使用 `amount`；卖出明确选择 `AMOUNT` 或 `SHARES`。指定分组优先传 `group_id`；7 天内重试必须复用 `client_request_id`。
 - `get_agent_requests()`
-- `update_agent_request(request_id, status)`
+- `update_agent_request(request_id, status="DISMISSED")`：只允许撤回待确认提示；`PROCESSED` 必须由 App 在用户确认后设置。
 
 个人报告：
 
@@ -352,7 +352,7 @@ clawhub install huahua-daily
 
 截图导入：
 
-- `import_holding_screenshots(image_paths?, images_base64?, import_type="HOLDINGS")`：识别持仓/自选截图，返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 可选 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率）。
+- `import_holding_screenshots(image_paths?, images_base64?, import_type="HOLDINGS")`：识别持仓/自选截图，返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 只能是 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率），未知值会直接报错。
 - `import_transaction_screenshots(image_paths?, images_base64?)`：识别交易流水截图，返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
 - `request_import_review(import_type, items, source_note="Agent screenshot import", client_request_id="")`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`；7 天内重试必须复用 `client_request_id`。
 

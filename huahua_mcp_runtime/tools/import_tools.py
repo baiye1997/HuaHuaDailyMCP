@@ -41,8 +41,11 @@ async def import_holding_screenshots(
             提取代码并精确匹配，避免名称模糊匹配的误配。
     """
     _require_token()
+    normalized_import_type = (import_type or "").strip().upper()
+    if normalized_import_type not in {"HOLDINGS", "WATCHLIST"}:
+        raise ValueError("import_type 必须是 HOLDINGS 或 WATCHLIST")
     files = _normalize_upload_files(image_paths, images_base64)
-    mode = "watchlist" if (import_type or "").strip().upper() == "WATCHLIST" else "holdings"
+    mode = "watchlist" if normalized_import_type == "WATCHLIST" else "holdings"
     raw = await _post_files("/api/import_screenshot", files, form_data={"mode": mode})
     items = raw if isinstance(raw, list) else []
     normalized = []

@@ -71,7 +71,7 @@ get_summary()
 - `todayProfitRate`：今日/昨日收益率，口径为 `todayProfit / totalDayBaseMarketValue × 100%`，不要用当前总市值重算。
 - `totalDayBaseMarketValue`：`todayProfitRate` 使用的归属日组合期初市值。
 - `displayedDayCompleteness`：组合当日收益完整度。若 `complete=false` 或 `pendingAttributionCount>0`，说明至少一只 QDII/T+N 最新官方净值尚无可靠 G 日；现有 `todayProfit` / `todayProfitRate` 仅覆盖可归属基金，不得表述为完整组合当日收益。
-- `estimateCompleteness`：当前估值帧可用性。若 `complete=false` 或 `timeoutCount>0`，至少一只持仓缺少可用估值帧，0 元不能表述为真实零涨跌；`staleCount>0` 表示使用了可用但陈旧的 last-good 帧。
+- `estimateCompleteness`：当前估值帧可用性。若 `complete=false` 或 `timeoutCount>0`，至少一只持仓缺少可用估值帧，0 元不能表述为真实零涨跌；用 `unavailableCodes` / `timeoutCodes` 定位基金，`staleCount>0` 与 `staleCodes` 表示使用了可用但陈旧的 last-good 帧。
 - `totalHoldingProfit`：持有收益。
 - `totalHoldingReturnRate`：持有收益率。
 - `cumulativeProfit`：累计收益；这是本 App 已记录交易推导的累计，仅在用户明确询问历史累计或该字段时使用。
@@ -300,7 +300,8 @@ get_item_estimate({"codes": ["110022"]})
 - `codes` 最多 50 个。
 - 可批量传入，避免逐个调用。
 - 结果同一 session 内缓存 60 秒。
-- 可传 `default_data_source_mode`（`huahua`/`a`/`b`/`c`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置。
+- 可传 `default_data_source_mode`（`huahua`/`a`/`b`/`c`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；未知值会直接报错，不能假定已回退到 `huahua`。
+- 必须检查顶层 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`；部分返回或 timeout 占位帧不能当成整批成功。
 
 ### 4.2 用户只提供基金名称
 
@@ -338,9 +339,9 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
 - 当前估算/涨跌：`get_item_estimate`。
 - 对比同一基金的多个行情源：`get_fund_source_previews`。
 - 历史走势：`get_item_history`。
-- 申购状态、QDII/限大额日累计限购金额、确认天数：`get_fund_fees`（单只）或 `get_batch_fund_fees`（批量，最多 50 只）。
+- 申购状态、QDII/限大额日累计限购金额、确认天数：`get_fund_fees`（单只）或 `get_batch_fund_fees`（批量，最多 50 只）；批量结果检查 `complete` 和 `missingCodes`。
 - 分红派息：`get_item_dividends`。
-- 近 1/3/6 月、1 年排名：`get_fund_period_rank`（单只）或 `get_batch_fund_period_ranks`（批量，最多 50 只）。
+- 近 1/3/6 月、1 年排名：`get_fund_period_rank`（单只）或 `get_batch_fund_period_ranks`（批量，最多 50 只）；批量排名从 `data` 读取并检查 `complete` 和 `missingCodes`。
 - 今日盘中估值曲线：`get_fund_timeline`；若用户指定行情源，传 `source_mode`。
 - 基础详情与持仓信息：`get_item_detail`。该工具不触发量化计算；收益、均线偏离、
   回撤、波动和历史统计必须按需调用 `get_fund_quant_metrics`。
@@ -626,7 +627,7 @@ update_agent_request({
 })
 ```
 
-不要替 App 把请求标记为 `PROCESSED`，除非用户明确要求且你知道这只是状态处理，不代表真实交易执行。
+不要替 App 把请求标记为 `PROCESSED`；MCP 会拒绝该状态，只有 App 能在用户确认后设置。
 
 ### 5.3 个人报告投递
 

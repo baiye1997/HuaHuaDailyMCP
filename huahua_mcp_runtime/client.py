@@ -12,14 +12,16 @@ OFFICIAL_API = os.environ.get("HUAHUA_API_BASE", "https://api.huahuadaily.cn").s
 session: dict = {
     "token": os.environ.get("HUAHUA_AGENT_TOKEN", "").strip(),
     "base_url": OFFICIAL_API,
+    "generation": 0,
 }
 
 http_client: Optional[httpx.AsyncClient] = None
 http_client_lock = threading.Lock()
 
-portfolio_cache: dict = {"data": None, "ts": 0.0}
+portfolio_cache: dict = {"data": None, "ts": 0.0, "generation": -1}
 PORTFOLIO_TTL = 30
 download_lock: Optional[asyncio.Lock] = None
+download_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
 estimate_cache: dict = {}
 ESTIMATE_TTL = 60
@@ -42,16 +44,20 @@ def get_client() -> httpx.AsyncClient:
 
 
 def get_download_lock() -> asyncio.Lock:
-    global download_lock
-    if download_lock is None:
+    global download_lock, download_lock_loop
+    loop = asyncio.get_running_loop()
+    if download_lock is None or download_lock_loop is not loop:
         download_lock = asyncio.Lock()
+        download_lock_loop = loop
     return download_lock
 
 
 def clear_session_caches() -> None:
     """Clear data tied to the current token/base URL."""
+    session["generation"] = int(session.get("generation") or 0) + 1
     portfolio_cache["data"] = None
     portfolio_cache["ts"] = 0.0
+    portfolio_cache["generation"] = -1
     estimate_cache.clear()
 
 
@@ -178,14 +184,13 @@ async def post_files(
 ) -> dict | list:
     try:
         multipart = [("files", (filename, content, mime)) for filename, content, mime in files]
-        upload_client = httpx.AsyncClient(timeout=httpx.Timeout(120, connect=30))
-        async with upload_client:
-            response = await upload_client.post(
-                url(path),
-                files=multipart,
-                data=form_data or None,
-                headers=headers(),
-            )
+        response = await get_client().post(
+            url(path),
+            files=multipart,
+            data=form_data or None,
+            headers=headers(),
+            timeout=httpx.Timeout(120, connect=30),
+        )
         _raise_auth_error(response)
         response.raise_for_status()
         return response.json()

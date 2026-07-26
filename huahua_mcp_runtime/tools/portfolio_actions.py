@@ -55,6 +55,28 @@ async def submit_personal_strategy_report(
         raise ValueError("summary 不能为空")
     if not isinstance(payload, dict) or not payload:
         raise ValueError("payload 必须是非空对象")
+    if len(clean_title) > 120:
+        raise ValueError("title 最多 120 字")
+    if len(clean_summary) > 500:
+        raise ValueError("summary 最多 500 字")
+    normalized_client_message_id = str(client_message_id or "").strip()
+    if normalized_client_message_id and not re.fullmatch(
+        r"[A-Za-z0-9:_-]{1,120}",
+        normalized_client_message_id,
+    ):
+        raise ValueError("client_message_id 仅支持 1-120 位字母、数字、冒号、下划线或连字符")
+    try:
+        payload_bytes = len(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    except (TypeError, ValueError):
+        raise ValueError("payload 必须是可序列化的 JSON 对象") from None
+    if payload_bytes > 512 * 1024:
+        raise ValueError("payload 不能超过 512KB")
 
     body = {
         "type": "STRATEGY_REPORT",
@@ -62,8 +84,8 @@ async def submit_personal_strategy_report(
         "summary": clean_summary,
         "payload": payload,
     }
-    if client_message_id:
-        body["clientMessageId"] = str(client_message_id).strip()
+    if normalized_client_message_id:
+        body["clientMessageId"] = normalized_client_message_id
     return await _post("/api/agent/messages", body)
 
 
@@ -111,7 +133,7 @@ async def request_transaction(
     _require_token()
     tx_type = record_type.upper()
     if tx_type not in ("BUY", "SELL"):
-        return "❌ record_type 必须是 'BUY' 或 'SELL'"
+        raise ValueError("record_type 必须是 BUY 或 SELL")
 
     validated_code = _validate_fund_code(item_code)
     normalized_name = str(item_name or "").strip()
@@ -144,9 +166,16 @@ async def request_transaction(
             validated_amount = _validate_amount(amount)
             payload_dict["amount"] = validated_amount
         else:
-            if not isinstance(shares, (int, float)) or not math.isfinite(float(shares)) or float(shares) <= 0:
+            if (
+                isinstance(shares, bool)
+                or not isinstance(shares, (int, float))
+                or not math.isfinite(float(shares))
+                or float(shares) <= 0
+            ):
                 raise ValueError("按份额卖出时 shares 必须是大于 0 的数字")
             validated_shares = round(float(shares), 6)
+            if validated_shares <= 0:
+                raise ValueError("卖出份额精确到 6 位小数后必须至少为 0.000001")
             if validated_shares > 1_000_000_000:
                 raise ValueError("卖出份额过大，请确认是否正确")
             payload_dict["shares"] = validated_shares
@@ -190,13 +219,13 @@ async def update_agent_request(request_id: str, status: str) -> dict:
 
     Args:
         request_id: get_agent_requests 返回的 id。
-        status: "DISMISSED" 或 "PROCESSED"。Agent 常用 "DISMISSED"。
+        status: 仅支持 "DISMISSED"；"PROCESSED" 必须由 App 在用户确认后设置。
     """
     _require_token()
     normalized_request_id = str(request_id or "").strip()
     if not normalized_request_id:
         raise ValueError("request_id 不能为空")
     normalized = (status or "").strip().upper()
-    if normalized not in ("PROCESSED", "DISMISSED"):
-        raise ValueError("status 必须是 PROCESSED 或 DISMISSED")
+    if normalized != "DISMISSED":
+        raise ValueError("MCP 仅支持 DISMISSED；PROCESSED 必须由 App 在用户确认后设置")
     return await _put(f"/api/agent/request/{normalized_request_id}", {"status": normalized})
