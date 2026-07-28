@@ -302,6 +302,7 @@ get_item_estimate({"codes": ["110022"]})
 - 结果同一 session 内缓存 60 秒。
 - 可传 `default_data_source_mode`（`huahua`/`b`/`c`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；未知值会直接报错，不能假定已回退到 `huahua`。
 - 必须检查顶层 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`；部分返回或 timeout 占位帧不能当成整批成功。
+- 新浪 B/C 对部分基金没有覆盖时，只表示对应基金或来源不可用；必须按代码检查上述集合，不能把单来源缺失描述成整批基金请求失败。
 
 ### 4.2 用户只提供基金名称
 
@@ -337,7 +338,10 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
 
 选择规则：
 - 当前估算/涨跌：`get_item_estimate`。
-- 对比同一基金的多个行情源：`get_fund_source_previews`。
+- 对比同一基金的多个行情源：`get_fund_source_previews`。来源面板不是统一的“实时估值”：
+  净值公布后，每个来源可能返回收盘前归档估值、当前新浪接口已切换的官方值，
+  或权威官方净值。必须同时检查条目的 `source` 与 `last_estimate_snap.source`；
+  `data` 缺少 B/C 只表示单来源覆盖或归档不足，不代表整个请求失败。
 - 历史走势：`get_item_history`。
 - 申购状态、QDII/限大额日累计限购金额、确认天数：`get_fund_fees`（单只）或 `get_batch_fund_fees`（批量，最多 50 只）；批量结果检查 `complete` 和 `missingCodes`。
 - 分红派息：`get_item_dividends`。

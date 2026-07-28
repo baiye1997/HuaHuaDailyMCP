@@ -111,6 +111,8 @@ async def get_item_estimate(
     支持新版后端多行情源：default_data_source_mode / data_source_mode_by_code。
     返回 requestedCodes、missingCodes、invalidCodes、unavailableCodes、timeoutCodes 和 complete；
     部分失败或不可用占位帧不会伪装成完整结果。
+    新浪 B/C 对部分基金没有覆盖时，只影响对应基金或来源；必须按上述集合逐项判断，
+    不能把单来源缺失解释成整批基金请求失败。
 
     Args:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
@@ -198,14 +200,18 @@ async def get_item_estimate(
 
 async def get_fund_source_previews(code: str) -> dict:
     """
-    获取单只基金在多个行情源下的实时估算预览。
+    获取单只基金在多个行情源下的来源预览。
     适合用户询问"不同数据源现在差多少"或需要选择基金级 dataSourceMode 时调用。
+    净值公布后，返回项可能是收盘前归档估值、当前新浪接口已切换的官方值，
+    或权威官方净值，不能统一描述成"实时估值"。应同时检查 source 和
+    last_estimate_snap.source；B/C 缺失表示单来源覆盖不足，不代表整个请求失败。
 
     Args:
         code: 项目编号，如 "000001"
 
     Returns:
-        dict 包含 code 和 data，其中 data 通常是 huahua/b/c 到同一缓存帧的映射。
+        dict 包含 code 和 data。data 是 huahua/b/c 的部分映射；普通基金可能缺少
+        未覆盖的 B/C，官方净值帧可通过 last_estimate_snap 保留最后估值证据。
     """
     _require_token()
     validated_code = _validate_fund_code(code)
