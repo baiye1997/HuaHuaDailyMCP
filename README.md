@@ -305,8 +305,8 @@ clawhub install huahua-daily
 市场与基金：
 
 - `search_item(query)`
-- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `huahua/b/c`，拼写错误会直接报错；检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`，不能把部分返回或 timeout 占位帧当成完整行情。新浪 B/C 缺少某只基金时只是该代码或来源覆盖不足，不等同于整批请求失败。
-- `get_fund_source_previews(code)`：单只基金 huahua/b/c 来源预览，用于解释或选择数据源。净值公布后，各来源可能返回收盘前归档估值、当前新浪接口已切换的官方值，或权威官方净值，不能统一描述成“实时估值”；同时检查 `source` 和 `last_estimate_snap.source`。`data` 允许缺少未覆盖或无归档的 B/C，这不代表整个请求失败。
+- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `huahua/b/c`，拼写错误会直接报错；检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`，不能把部分返回或 timeout 占位帧当成完整行情。新浪 B/C 缺少某只基金时只是该代码或来源覆盖不足，不等同于整批请求失败。显式选择 B/C 但无覆盖时会回退完整花花链路；若返回 `source=sector_proxy_estimate`，它表示主路径均未命中后的关联标的/关联板块估算，并以 `dataSourceSelection.fellBackToHuahua=true` 说明实际来源，不能描述成新浪值。
+- `get_fund_source_previews(code)`：单只基金 huahua/b/c 来源预览，用于解释或选择数据源。净值公布后，各来源可能返回收盘前归档估值、当前新浪接口已切换的官方值、权威官方净值，或花花的 `sector_proxy_estimate` 关联标的/关联板块兜底，不能统一描述成“实时估值”；同时检查 `source` 和 `last_estimate_snap.source`。`data` 允许缺少未覆盖或无归档的 B/C，这不代表整个请求失败。
 - `get_daily_rank()`：返回已形成当日估值或官方净值快照的活跃基金池排行，不代表全市场全量基金。
 - `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
 - `get_item_history(code)`

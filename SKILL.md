@@ -340,8 +340,12 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
 - 当前估算/涨跌：`get_item_estimate`。
 - 对比同一基金的多个行情源：`get_fund_source_previews`。来源面板不是统一的“实时估值”：
   净值公布后，每个来源可能返回收盘前归档估值、当前新浪接口已切换的官方值，
-  或权威官方净值。必须同时检查条目的 `source` 与 `last_estimate_snap.source`；
+  权威官方净值，或花花的 `sector_proxy_estimate` 关联标的/关联板块兜底。必须同时检查
+  条目的 `source` 与 `last_estimate_snap.source`；
   `data` 缺少 B/C 只表示单来源覆盖或归档不足，不代表整个请求失败。
+- 显式选择新浪 B/C 但该源无覆盖时，后端会继续回退完整花花链路（包含
+  `sector_proxy_estimate`）；检查 `dataSourceSelection.fellBackToHuahua`，不得把回退值
+  误述为新浪值。该回退只影响对应基金，不应把整批请求判为失败。
 - 历史走势：`get_item_history`。
 - 申购状态、QDII/限大额日累计限购金额、确认天数：`get_fund_fees`（单只）或 `get_batch_fund_fees`（批量，最多 50 只）；批量结果检查 `complete` 和 `missingCodes`。
 - 分红派息：`get_item_dividends`。

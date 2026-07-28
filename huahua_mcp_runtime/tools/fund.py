@@ -113,6 +113,9 @@ async def get_item_estimate(
     部分失败或不可用占位帧不会伪装成完整结果。
     新浪 B/C 对部分基金没有覆盖时，只影响对应基金或来源；必须按上述集合逐项判断，
     不能把单来源缺失解释成整批基金请求失败。
+    显式选择 B/C 但该源无覆盖时，后端会继续回退完整花花链路；结果可能以
+    source=sector_proxy_estimate 返回关联标的或关联板块估算，并在
+    dataSourceSelection.fellBackToHuahua=true 标记实际已回退，不能误报为新浪值。
 
     Args:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
@@ -205,6 +208,8 @@ async def get_fund_source_previews(code: str) -> dict:
     净值公布后，返回项可能是收盘前归档估值、当前新浪接口已切换的官方值，
     或权威官方净值，不能统一描述成"实时估值"。应同时检查 source 和
     last_estimate_snap.source；B/C 缺失表示单来源覆盖不足，不代表整个请求失败。
+    花花项还可能以 sector_proxy_estimate 表示主估值路径均未命中后的关联标的/
+    关联板块兜底，这不是新浪或官方净值。
 
     Args:
         code: 项目编号，如 "000001"
