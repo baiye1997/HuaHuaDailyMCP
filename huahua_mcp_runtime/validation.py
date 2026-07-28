@@ -10,7 +10,7 @@ from typing import Optional
 
 from .portfolio_math import r2
 
-DATA_SOURCE_MODES = {"huahua", "a", "b", "c"}
+DATA_SOURCE_MODES = {"huahua", "b", "c"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
 

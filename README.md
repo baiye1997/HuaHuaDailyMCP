@@ -305,8 +305,9 @@ clawhub install huahua-daily
 市场与基金：
 
 - `search_item(query)`
-- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `huahua/a/b/c`，拼写错误会直接报错；检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`，不能把部分返回或 timeout 占位帧当成完整行情。
-- `get_fund_source_previews(code)`：单只基金 huahua/a/b/c 多行情源估算预览，用于解释或选择数据源。
+- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `huahua/b/c`，拼写错误会直接报错；检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`，不能把部分返回或 timeout 占位帧当成完整行情。
+- `get_fund_source_previews(code)`：单只基金 huahua/b/c 同一 Redis 快照预览，用于解释或选择数据源。
+- `get_daily_rank()`：返回已形成当日估值或官方净值快照的活跃基金池排行，不代表全市场全量基金。
 - `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
 - `get_item_history(code)`
 - `get_item_dividends(code)`

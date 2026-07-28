@@ -300,7 +300,7 @@ get_item_estimate({"codes": ["110022"]})
 - `codes` 最多 50 个。
 - 可批量传入，避免逐个调用。
 - 结果同一 session 内缓存 60 秒。
-- 可传 `default_data_source_mode`（`huahua`/`a`/`b`/`c`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；未知值会直接报错，不能假定已回退到 `huahua`。
+- 可传 `default_data_source_mode`（`huahua`/`b`/`c`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；未知值会直接报错，不能假定已回退到 `huahua`。
 - 必须检查顶层 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`；部分返回或 timeout 占位帧不能当成整批成功。
 
 ### 4.2 用户只提供基金名称

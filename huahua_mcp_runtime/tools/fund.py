@@ -13,9 +13,9 @@ from ..quant_validation import (
     validate_quant_current_frame as _validate_quant_current_frame,
     validate_quant_view as _validate_quant_view,
 )
+from ..validation import DATA_SOURCE_MODES as _DATA_SOURCE_MODES
 
 _RUNTIME_DEPENDENCIES = ("_fetch_estimates", "_get", "_post", "_require_token", "_validate_fund_code")
-_DATA_SOURCE_MODES = {"huahua", "a", "b", "c"}
 
 if False:  # pragma: no cover - populated by bind() before tool registration
     _fetch_estimates = None
@@ -63,7 +63,7 @@ def _estimate_frame_available(item: dict) -> bool:
 def _validate_public_data_source_mode(value, field: str) -> str:
     normalized = str(value or "").strip().lower()
     if normalized not in _DATA_SOURCE_MODES:
-        raise ValueError(f"{field} 仅支持 huahua、a、b 或 c")
+        raise ValueError(f"{field} 仅支持 huahua、b 或 c")
     return normalized
 
 
@@ -114,7 +114,7 @@ async def get_item_estimate(
 
     Args:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
-        default_data_source_mode: 默认行情源模式：huahua/a/b/c。
+        default_data_source_mode: 默认行情源模式：huahua/b/c。
         data_source_mode_by_code: 可选，每只基金单独指定行情源模式。
     """
     _require_token()
@@ -205,7 +205,7 @@ async def get_fund_source_previews(code: str) -> dict:
         code: 项目编号，如 "000001"
 
     Returns:
-        dict 包含 code 和 data，其中 data 通常是 huahua/a/b/c 到估算帧的映射。
+        dict 包含 code 和 data，其中 data 通常是 huahua/b/c 到同一缓存帧的映射。
     """
     _require_token()
     validated_code = _validate_fund_code(code)
@@ -214,8 +214,8 @@ async def get_fund_source_previews(code: str) -> dict:
 
 async def get_daily_rank() -> dict:
     """
-    获取今日涨幅榜和跌幅榜。
-    返回涨幅最大和跌幅最大的项目列表，以及板块概览。
+    获取已形成今日估值或官方净值快照的活跃基金涨跌榜。
+    返回当前活跃快照池中的涨幅、跌幅和板块概览，不代表全市场全量基金。
     """
     _require_token()
     return await _get("/api/fund/today-rank")
@@ -255,7 +255,7 @@ async def get_fund_timeline(code: str, source_mode: str = "huahua") -> list:
 
     Args:
         code: 项目编号，如 "000001"
-        source_mode: 行情源模式：huahua/a/b/c。
+        source_mode: 行情源模式：huahua/b/c。
     """
     _require_token()
     validated_code = _validate_fund_code(code)
