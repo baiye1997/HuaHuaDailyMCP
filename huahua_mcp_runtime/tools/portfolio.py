@@ -44,6 +44,30 @@ def bind(runtime_globals: dict) -> None:
     globals()["_runtime_get_records"] = RuntimeCallable(runtime_globals, "get_records")
 
 
+def _estimate_audit_payload(estimate: dict, requested_mode: str) -> dict:
+    decision = estimate.get("estimateDecision")
+    decision = decision if isinstance(decision, dict) else {}
+    selection = estimate.get("dataSourceSelection")
+    selection = selection if isinstance(selection, dict) else {}
+    fallback = decision.get("fallback")
+    fallback = fallback if isinstance(fallback, dict) else None
+    return {
+        "preference": decision.get("preference")
+        or estimate.get("dataSourceMode")
+        or requested_mode,
+        "provider": decision.get("provider"),
+        "engine": decision.get("engine"),
+        "status": decision.get("status"),
+        "reason": decision.get("reason"),
+        "coverage": decision.get("coverage"),
+        "fallback": fallback,
+        "usedProvider": selection.get("usedProvider"),
+        "fellBackToHuahua": selection.get("fellBackToHuahua") is True,
+        "policyRevision": decision.get("policyRevision")
+        or estimate.get("policyRevision"),
+    }
+
+
 async def get_sync_meta() -> dict:
     """
     获取云端实时同步主数据元信息，不下载完整数据。
@@ -189,8 +213,10 @@ async def get_records(include_transactions: bool = False) -> dict:
     - dataUpdatedAt: 云端实时同步主数据的最后更新时间（UTC），展示给用户让其知晓数据新鲜度
     - strategyPreferences.maxDrawdownLimitPct: 用户设置的组合回撤阈值百分数；0 表示未启用
     - summary.estimateCompleteness: 当前估值帧可用性。complete=false 表示至少一只持仓
-      没有可用于当日收益的估值帧；timeoutCount>0 时不得把 0 元当成真实零涨跌。
-      staleCount>0 表示服务端返回了可用但陈旧的 last-good 帧。
+      没有可用于当日收益的估值帧；timeoutCount>0 或 staleCount>0 时不得把 0 元
+      当成真实零涨跌，过期 last-good 只供审计。
+    - holdings[].estimateAudit: 实际 provider/engine/coverage/fallback 等内部审计字段。
+      面向用户只表达官方发布或估算种类与覆盖率，不展示内部实现名称或低置信标签。
 
     Args:
         include_transactions: 是否在每条记录中附带原始 transactions。默认 false 以节省上下文。
@@ -287,6 +313,11 @@ async def get_records(include_transactions: bool = False) -> dict:
         # 估算时间（来自后端 gztime 字段）
         if est:
             enriched["estimateTime"] = est.get("gztime", "")
+            requested_mode = mode_by_code.get(
+                normalized_code,
+                _normalize_data_source_mode(user_preferences.get("fundDataSourceMode")),
+            )
+            enriched["estimateAudit"] = _estimate_audit_payload(est, requested_mode)
 
         # 在途资产（PENDING 买入交易）
         pending_buy_txs = [
@@ -355,11 +386,11 @@ async def get_records(include_transactions: bool = False) -> dict:
             pending_attribution_count += 1
         if f.get("estimateAvailable"):
             estimate_available_count += 1
-            if f.get("estimateStale"):
-                estimate_stale_count += 1
-                estimate_stale_codes.append(f.get("code"))
         else:
             estimate_unavailable_codes.append(f.get("code"))
+        if f.get("estimateStale"):
+            estimate_stale_count += 1
+            estimate_stale_codes.append(f.get("code"))
         if f.get("estimateSource") == "timeout":
             estimate_timeout_count += 1
             estimate_timeout_codes.append(f.get("code"))

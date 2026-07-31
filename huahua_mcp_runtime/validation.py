@@ -10,7 +10,9 @@ from typing import Optional
 
 from .portfolio_math import r2
 
-DATA_SOURCE_MODES = {"huahua", "b", "c"}
+DATA_SOURCE_MODES = {"source_a", "source_b", "huahua"}
+LEGACY_DATA_SOURCE_MODES = {"b": "source_a", "c": "source_b"}
+DATA_SOURCE_PREFERENCE_EPOCH = 1
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
 
@@ -45,8 +47,10 @@ def validate_fund_code(code: str) -> str:
 
 
 def normalize_data_source_mode(value) -> str:
-    normalized = str(value or "huahua").strip().lower()
-    return normalized if normalized in DATA_SOURCE_MODES else "huahua"
+    normalized = str(value or "source_a").strip().lower()
+    if normalized in DATA_SOURCE_MODES:
+        return normalized
+    return LEGACY_DATA_SOURCE_MODES.get(normalized, "source_a")
 
 
 def validate_amount(amount: float) -> float:

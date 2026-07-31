@@ -2,18 +2,22 @@
 
 import asyncio  # noqa: F401
 import json  # noqa: F401
-import math
 import os  # noqa: F401
 import re  # noqa: F401
 import time  # noqa: F401
 from typing import Optional  # noqa: F401
 
 from .binding import bind_runtime
+from .fund_estimate_helpers import (
+    estimate_frame_available as _estimate_frame_available,
+    sanitize_estimate_frame as _sanitize_estimate_frame,
+    sanitize_source_preview_payload as _sanitize_source_preview_payload,
+    validate_public_data_source_mode as _validate_public_data_source_mode,
+)
 from ..quant_validation import (
     validate_quant_current_frame as _validate_quant_current_frame,
     validate_quant_view as _validate_quant_view,
 )
-from ..validation import DATA_SOURCE_MODES as _DATA_SOURCE_MODES
 
 _RUNTIME_DEPENDENCIES = ("_fetch_estimates", "_get", "_post", "_require_token", "_validate_fund_code")
 
@@ -27,44 +31,6 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
-
-
-def _estimate_frame_available(item: dict) -> bool:
-    if not isinstance(item, dict) or not item:
-        return False
-    source = str(item.get("source") or "").strip().lower()
-    if source in {"reset", "timeout", "unavailable"}:
-        return False
-
-    def to_float(value) -> float:
-        if isinstance(value, bool):
-            return float("nan")
-        try:
-            return float(str(value).replace("%", ""))
-        except (TypeError, ValueError):
-            return float("nan")
-
-    previous_nav = to_float(item.get("prev_dwjz") or item.get("prevNav"))
-    estimated_nav = to_float(item.get("estimatedNav") or item.get("nav"))
-    change_percent = item.get("estimatedChangePercent")
-    if change_percent is None:
-        change_percent = item.get("gszzl")
-    parsed_change_percent = to_float(change_percent)
-    return (
-        math.isfinite(previous_nav)
-        and previous_nav > 0
-        and (
-            (math.isfinite(estimated_nav) and estimated_nav > 0)
-            or math.isfinite(parsed_change_percent)
-        )
-    )
-
-
-def _validate_public_data_source_mode(value, field: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized not in _DATA_SOURCE_MODES:
-        raise ValueError(f"{field} 仅支持 huahua、b 或 c")
-    return normalized
 
 
 async def search_item(query: str) -> list:
@@ -101,7 +67,7 @@ async def get_item_detail(code: str) -> dict:
 
 async def get_item_estimate(
     codes: list[str],
-    default_data_source_mode: str = "huahua",
+    default_data_source_mode: str = "source_a",
     data_source_mode_by_code: Optional[dict] = None,
 ) -> dict:
     """
@@ -109,17 +75,17 @@ async def get_item_estimate(
     适合查询"现在涨了多少""今天净值多少"等日常行情问题，不会附带量化计算。
     结果在同一 session 内缓存 60 秒，与 get_records 共享缓存，无重复网络请求。
     支持新版后端多行情源：default_data_source_mode / data_source_mode_by_code。
-    返回 requestedCodes、missingCodes、invalidCodes、unavailableCodes、timeoutCodes 和 complete；
-    部分失败或不可用占位帧不会伪装成完整结果。
-    新浪 B/C 对部分基金没有覆盖时，只影响对应基金或来源；必须按上述集合逐项判断，
+    返回 requestedCodes、missingCodes、invalidCodes、unavailableCodes、timeoutCodes、
+    staleCodes、decisionUnavailableCodes 和 complete；部分失败、过期或决策不可用帧
+    不会伪装成完整结果。
+    来源 A/B 对部分基金没有覆盖时，只影响对应基金或来源；必须按上述集合逐项判断，
     不能把单来源缺失解释成整批基金请求失败。
-    显式选择 B/C 但该源无覆盖时，后端会继续回退完整花花链路；结果可能以
-    source=sector_proxy_estimate 返回关联标的或关联板块估算，并在
-    dataSourceSelection.fellBackToHuahua=true 标记实际已回退，不能误报为新浪值。
+    显式选择 A/B 但该源无覆盖时，后端会继续回退花花来源。所有可信主路径和
+    同日快照均失败时会明确返回 unavailable，不会借用其他基金或板块均值造数。
 
     Args:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
-        default_data_source_mode: 默认行情源模式：huahua/b/c。
+        default_data_source_mode: 默认行情源模式：source_a/source_b/huahua。
         data_source_mode_by_code: 可选，每只基金单独指定行情源模式。
     """
     _require_token()
@@ -164,6 +130,8 @@ async def get_item_estimate(
             "invalidCodes": invalid_codes,
             "unavailableCodes": [],
             "timeoutCodes": [],
+            "staleCodes": [],
+            "decisionUnavailableCodes": [],
             "complete": not invalid_codes,
         }
     estimate_map = await _fetch_estimates(
@@ -172,7 +140,7 @@ async def get_item_estimate(
         data_source_mode_by_code=validated_mode_by_code,
     )
     normalized_map = {
-        str(code): value
+        str(code): _sanitize_estimate_frame(value)
         for code, value in estimate_map.items()
     }
     missing_codes = [code for code in validated_codes if code not in normalized_map]
@@ -186,6 +154,25 @@ async def get_item_estimate(
         for code in unavailable_codes
         if str(normalized_map[code].get("source") or "").strip().lower() == "timeout"
     ]
+    stale_codes = [
+        code
+        for code in unavailable_codes
+        if normalized_map[code].get("stale") is True
+        or normalized_map[code].get("estimateStale") is True
+        or str(
+            normalized_map[code].get("freshness")
+            or normalized_map[code].get("estimateFreshness")
+            or ""
+        ).strip().lower() == "stale"
+    ]
+    decision_unavailable_codes = [
+        code
+        for code in unavailable_codes
+        if isinstance(normalized_map[code].get("estimateDecision"), dict)
+        and str(
+            normalized_map[code]["estimateDecision"].get("status") or ""
+        ).strip().lower() == "unavailable"
+    ]
     return {
         "data": [
             normalized_map[code]
@@ -197,6 +184,8 @@ async def get_item_estimate(
         "invalidCodes": invalid_codes,
         "unavailableCodes": unavailable_codes,
         "timeoutCodes": timeout_codes,
+        "staleCodes": stale_codes,
+        "decisionUnavailableCodes": decision_unavailable_codes,
         "complete": not missing_codes and not invalid_codes and not unavailable_codes,
     }
 
@@ -205,22 +194,25 @@ async def get_fund_source_previews(code: str) -> dict:
     """
     获取单只基金在多个行情源下的来源预览。
     适合用户询问"不同数据源现在差多少"或需要选择基金级 dataSourceMode 时调用。
-    净值公布后，返回项可能是收盘前归档估值、当前新浪接口已切换的官方值，
-    或权威官方净值，不能统一描述成"实时估值"。应同时检查 source 和
-    last_estimate_snap.source；B/C 缺失表示单来源覆盖不足，不代表整个请求失败。
-    花花项还可能以 sector_proxy_estimate 表示主估值路径均未命中后的关联标的/
-    关联板块兜底，这不是新浪或官方净值。
+    净值公布后，只有同日收盘前归档估值才会出现在 last_estimate_snap；
+    当前官方净值不会被改名为 A/B 的历史估值。数据来源 A/B 缺失表示
+    单来源证据不足，不代表整个请求失败。
+    花花项主路径均未命中时会明确不可用；板块均值只作内部审计参照，不会作为
+    基金估值返回。
 
     Args:
         code: 项目编号，如 "000001"
 
     Returns:
-        dict 包含 code 和 data。data 是 huahua/b/c 的部分映射；普通基金可能缺少
-        未覆盖的 B/C，官方净值帧可通过 last_estimate_snap 保留最后估值证据。
+        dict 包含 code 和 data。data 是 source_a/source_b/huahua 的部分映射；
+        普通基金可能缺少未覆盖的 A/B，官方净值帧可通过 last_estimate_snap
+        保留最后估值证据。
     """
     _require_token()
     validated_code = _validate_fund_code(code)
-    return await _get(f"/api/estimate/source-previews/{validated_code}")
+    return _sanitize_source_preview_payload(
+        await _get(f"/api/estimate/source-previews/{validated_code}")
+    )
 
 
 async def get_daily_rank() -> dict:
@@ -258,7 +250,7 @@ async def get_item_dividends(code: str) -> list:
     return data if isinstance(data, list) else []
 
 
-async def get_fund_timeline(code: str, source_mode: str = "huahua") -> list:
+async def get_fund_timeline(code: str, source_mode: str = "source_a") -> list:
     """
     获取指定项目今日分时估值走势（每隔几分钟一个数据点，盘中更新）。
     适合了解今日净值走势曲线，判断入场时机。
@@ -266,7 +258,7 @@ async def get_fund_timeline(code: str, source_mode: str = "huahua") -> list:
 
     Args:
         code: 项目编号，如 "000001"
-        source_mode: 行情源模式：huahua/b/c。
+        source_mode: 行情源模式：source_a/source_b/huahua。
     """
     _require_token()
     validated_code = _validate_fund_code(code)

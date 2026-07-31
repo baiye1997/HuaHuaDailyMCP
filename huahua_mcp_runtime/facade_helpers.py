@@ -5,6 +5,8 @@ import re
 import time
 from typing import Any, Optional
 
+from .validation import DATA_SOURCE_PREFERENCE_EPOCH
+
 
 estimate_semaphore = asyncio.Semaphore(3)
 _estimate_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -36,7 +38,7 @@ def _get_estimate_inflight_lock() -> asyncio.Lock:
 async def fetch_estimates(
     runtime: dict[str, Any],
     codes: list,
-    default_data_source_mode: str = "huahua",
+    default_data_source_mode: str = "source_a",
     data_source_mode_by_code: Optional[dict] = None,
 ) -> dict:
     """Fetch estimates while resolving patchable dependencies from the facade."""
@@ -66,6 +68,7 @@ async def fetch_estimates(
                 {
                     "codes": batch,
                     "defaultDataSourceMode": default_mode,
+                    "dataSourcePreferenceEpoch": DATA_SOURCE_PREFERENCE_EPOCH,
                     "dataSourceModeByCode": {
                         code: mode_for(code) for code in batch if mode_for(code) != default_mode or code in mode_by_code
                     },

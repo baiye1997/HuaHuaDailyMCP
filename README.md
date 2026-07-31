@@ -245,9 +245,6 @@ clawhub install huahua-daily
 - 用户想买入/卖出时，必须先确认基金名称、代码、金额或份额、卖出模式和分组，再调用 request_transaction；指定分组时优先传稳定的 `group_id`。
 - request_transaction 只发送待确认信号，必须明确告知用户需要打开 App 确认。
 - 7 天内重试同一交易或导入请求时必须复用 `client_request_id`，服务端会保留该窗口内的幂等记录，避免产生重复待确认 Banner；超过窗口请生成新的请求 ID。
-- 用户明确要求生成个人组合报告时，可以基于其授权读取的持仓、交易和行情数据生成，并调用 submit_personal_strategy_report 投递到当前 token 用户自己的报告中心。
-- submit_personal_strategy_report 需要 `messages:write` scope；如需同一个 token 同时读取持仓并投递个人报告，使用 `agent:full messages:write`。默认 `agent:full` 不含个人报告写入。
-- submit_personal_strategy_report 只能写当前 Agent Token 所属用户，不能广播，不能指定 user_id，不得声称发送给所有用户。
 - 不得调用 /api/hermes/reports；公开 MCP 不提供管理员公共报告写入能力。
 - 截图导入先调用 import_holding_screenshots 或 import_transaction_screenshots。
 - 对 unmatched / ambiguous 条目只做轻确认，补齐基金代码、日期、金额、份额等识别歧义。
@@ -256,7 +253,8 @@ clawhub install huahua-daily
 - 数据来自云端实时同步主数据，MCP 固定读取结构化组合接口，不读取旧同步大包或云端历史备份快照。若用户刚在 App 操作，提醒其确认实时同步已完成再查询。
 - `get_records` 的市值/持有收益只按 App 云端主数据中的官方 `lastNav` 计算；盘中估算只用于今日收益，不用于持仓市值。
 - QDII/T+N 最新官方净值缺少可靠 G 日时，`todayProfit` 和归属日分母不会提前计入；检查 `summary.displayedDayCompleteness.complete` 与 `pendingAttributionCount`，不得把残缺组合描述成完整当日收益。
-- `summary.estimateCompleteness.complete=false` 或 `timeoutCount>0` 表示至少一只持仓缺少可用估值帧；此时 0 元不是已确认的真实零涨跌。用 `unavailableCodes` / `timeoutCodes` 定位基金；`staleCount>0` 与 `staleCodes` 表示使用了可用但陈旧的 last-good 帧。
+- `summary.estimateCompleteness.complete=false`、`timeoutCount>0` 或 `staleCount>0` 表示至少一只持仓缺少可用估值帧；此时 0 元不是已确认的真实零涨跌。用 `unavailableCodes` / `timeoutCodes` / `staleCodes` 定位基金；过期 last-good 仅供审计，不参与今日收益。
+- `huahua` 是稳定的花花托管策略身份，不承诺固定内部实现。`get_records` 的 `holdings[].estimateAudit` 保留实际 provider、engine、coverage、fallback 等审计字段；面向用户只展示官方发布或估算种类及覆盖率，不展示“自研”“低置信”等内部标签。
 - 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
@@ -305,13 +303,13 @@ clawhub install huahua-daily
 市场与基金：
 
 - `search_item(query)`
-- `get_item_estimate(codes, default_data_source_mode="huahua", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `huahua/b/c`，拼写错误会直接报错；检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`，不能把部分返回或 timeout 占位帧当成完整行情。新浪 B/C 缺少某只基金时只是该代码或来源覆盖不足，不等同于整批请求失败。显式选择 B/C 但无覆盖时会回退完整花花链路；若返回 `source=sector_proxy_estimate`，它表示主路径均未命中后的关联标的/关联板块估算，并以 `dataSourceSelection.fellBackToHuahua=true` 说明实际来源，不能描述成新浪值。
-- `get_fund_source_previews(code)`：单只基金 huahua/b/c 来源预览，用于解释或选择数据源。净值公布后，各来源可能返回收盘前归档估值、当前新浪接口已切换的官方值、权威官方净值，或花花的 `sector_proxy_estimate` 关联标的/关联板块兜底，不能统一描述成“实时估值”；同时检查 `source` 和 `last_estimate_snap.source`。`data` 允许缺少未覆盖或无归档的 B/C，这不代表整个请求失败。
+- `get_item_estimate(codes, default_data_source_mode="source_a", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `source_a/source_b/huahua`，默认 A，只有 Pro 可切换。检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes`、`timeoutCodes`、`staleCodes` 和 `decisionUnavailableCodes`，不能把部分返回、timeout、过期或决策不可用帧当成完整行情。来源 A/B 缺少某只基金时只是该代码或来源覆盖不足，不等同于整批请求失败；所有可信路径均未命中时必须明确不可用，不能借用其他基金或板块均值造数。
+- `get_fund_source_previews(code)`：单只基金 `source_a/source_b/huahua` 来源预览，用于解释或选择数据源。净值公布后，各来源可能返回收盘前归档估值、当前接口已切换的官方值或权威官方净值；同时检查 `source` 和 `last_estimate_snap.source`。`data` 允许缺少未覆盖或无归档的 A/B，这不代表整个请求失败。
 - `get_daily_rank()`：返回已形成当日估值或官方净值快照的活跃基金池排行，不代表全市场全量基金。
 - `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
 - `get_item_history(code)`
 - `get_item_dividends(code)`
-- `get_fund_timeline(code, source_mode="huahua")`
+- `get_fund_timeline(code, source_mode="source_a")`
 - `get_fund_fees(code)`：确认天数、申购状态、QDII/限大额日累计限购金额等交易规则。
 - `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只；检查 `complete` 和 `missingCodes`。
 - `get_fund_period_rank(code)`
@@ -346,10 +344,6 @@ clawhub install huahua-daily
 - `request_transaction(item_code, item_name, record_type, amount=0, date="", note="", group_name="", group_id="", sell_mode="AMOUNT", shares=0, client_request_id="")`：买入使用 `amount`；卖出明确选择 `AMOUNT` 或 `SHARES`。指定分组优先传 `group_id`；7 天内重试必须复用 `client_request_id`。
 - `get_agent_requests()`
 - `update_agent_request(request_id, status="DISMISSED")`：只允许撤回待确认提示；`PROCESSED` 必须由 App 在用户确认后设置。
-
-个人报告：
-
-- `submit_personal_strategy_report(title, summary, payload, client_message_id="")`：将个人策略报告投递到当前 Agent Token 所属用户的报告中心。需要显式 `messages:write` scope；如需同一个 token 同时读取持仓并投递个人报告，使用 `agent:full messages:write`。可基于用户明确授权的持仓、交易和行情数据生成。该工具不能广播，不能指定 `user_id`，不能写公共 Hermes 报告，也不得调用 `/api/hermes/reports`。
 
 截图导入：
 

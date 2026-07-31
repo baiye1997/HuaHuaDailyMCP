@@ -275,7 +275,7 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
     holding_return_rate = ratio_pct(holding_profit, cost_total) if valuation_available else None
 
     source = (
-        str(estimate.get("source") or fund.get("source") or "")
+        str(estimate.get("source") or "")
         if has_current_estimate
         else "unavailable"
     )
@@ -284,7 +284,13 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
         if source == "official_published"
         else ""
     )
-    unavailable_sources = {"reset", "timeout", "unavailable"}
+    unavailable_sources = {
+        "",
+        "reset",
+        "timeout",
+        "unavailable",
+        "sector_proxy_estimate",
+    }
     current_estimated_nav = to_float(estimate.get("estimatedNav") or estimate.get("nav"))
     current_previous_nav = to_float(estimate.get("prev_dwjz") or estimate.get("prevNav"))
     current_change_percent = estimate.get("estimatedChangePercent")
@@ -296,30 +302,44 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
         else float("nan")
     )
     has_valid_change_percent = math.isfinite(parsed_change_percent)
-    estimate_available = has_current_estimate and source not in unavailable_sources and (
+    decision = estimate.get("estimateDecision")
+    decision_status = (
+        str(decision.get("status") or "").strip().lower()
+        if isinstance(decision, dict)
+        else ""
+    )
+    estimate_freshness = str(
+        estimate.get("freshness")
+        or ("stale" if estimate.get("stale") is True else "")
+        or ""
+    ).strip().lower()
+    stale_frame = source != "official_published" and (
+        estimate.get("stale") is True
+        or estimate.get("estimateStale") is True
+        or estimate_freshness == "stale"
+    )
+    estimate_available = (
+        has_current_estimate
+        and source not in unavailable_sources
+        and decision_status != "unavailable"
+        and not stale_frame
+        and (
         current_previous_nav > 0
         and (current_estimated_nav > 0 or has_valid_change_percent)
+        )
     )
     displayed_day_attributable = estimate_available and (
         source != "official_published" or bool(official_attribution_date)
     )
-    estimated_nav = current_estimated_nav or to_float(fund.get("estimatedNav"))
+    estimated_nav = current_estimated_nav
     if estimated_nav <= 0:
         estimated_nav = 0.0
     estimated_change_percent = (
         current_change_percent
         if current_change_percent is not None
-        else fund.get("estimatedChangePercent")
+        else None
     )
-    estimate_freshness = str(
-        estimate.get("freshness")
-        or ("stale" if estimate.get("stale") is True else "")
-        or (fund.get("estimateFreshness") if has_current_estimate else "")
-        or ""
-    )
-    estimate_stale = estimate_available and (
-        estimate.get("stale") is True or estimate_freshness == "stale"
-    )
+    estimate_stale = stale_frame
     today_profit = (
         0.0
         if source == "reset" or not displayed_day_attributable
@@ -368,8 +388,8 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
         "currentNav": official_nav,
         "lastNav": official_nav if official_nav > 0 else None,
         "valuationAvailable": valuation_available,
-        "estimatedNav": estimated_nav if estimated_nav > 0 else None,
-        "estimatedChangePercent": estimated_change_percent,
+        "estimatedNav": estimated_nav if estimate_available and estimated_nav > 0 else None,
+        "estimatedChangePercent": estimated_change_percent if estimate_available else None,
         "displayedDayAttributable": displayed_day_attributable,
         "estimateSource": source,
         "estimateAvailable": estimate_available,

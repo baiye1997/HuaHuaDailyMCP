@@ -99,7 +99,7 @@ mcp._mcp_server.version = __version__
 
 async def _fetch_estimates(
     codes: list,
-    default_data_source_mode: str = "huahua",
+    default_data_source_mode: str = "source_a",
     data_source_mode_by_code: Optional[dict] = None,
 ) -> dict:
     return await _fetch_estimates_impl(

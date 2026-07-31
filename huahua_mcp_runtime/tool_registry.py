@@ -52,7 +52,6 @@ TOOL_NAMES = (
     "get_tags",
     "get_records",
     "get_summary",
-    "submit_personal_strategy_report",
     "request_transaction",
     "get_agent_requests",
     "update_agent_request",

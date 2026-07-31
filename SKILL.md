@@ -71,7 +71,7 @@ get_summary()
 - `todayProfitRate`：今日/昨日收益率，口径为 `todayProfit / totalDayBaseMarketValue × 100%`，不要用当前总市值重算。
 - `totalDayBaseMarketValue`：`todayProfitRate` 使用的归属日组合期初市值。
 - `displayedDayCompleteness`：组合当日收益完整度。若 `complete=false` 或 `pendingAttributionCount>0`，说明至少一只 QDII/T+N 最新官方净值尚无可靠 G 日；现有 `todayProfit` / `todayProfitRate` 仅覆盖可归属基金，不得表述为完整组合当日收益。
-- `estimateCompleteness`：当前估值帧可用性。若 `complete=false` 或 `timeoutCount>0`，至少一只持仓缺少可用估值帧，0 元不能表述为真实零涨跌；用 `unavailableCodes` / `timeoutCodes` 定位基金，`staleCount>0` 与 `staleCodes` 表示使用了可用但陈旧的 last-good 帧。
+- `estimateCompleteness`：当前估值帧可用性。若 `complete=false`、`timeoutCount>0` 或 `staleCount>0`，至少一只持仓缺少可用估值帧，0 元不能表述为真实零涨跌；用 `unavailableCodes` / `timeoutCodes` / `staleCodes` 定位基金。过期 last-good 只供内部审计，不参与今日收益。
 - `totalHoldingProfit`：持有收益。
 - `totalHoldingReturnRate`：持有收益率。
 - `cumulativeProfit`：累计收益；这是本 App 已记录交易推导的累计，仅在用户明确询问历史累计或该字段时使用。
@@ -100,6 +100,8 @@ get_records({"include_transactions": false})
 云端实时同步主数据会保存最后一次官方净值作为恢复基线，但不会保存盘中估值等高频行情。`get_records` 会主动拉取最新行情用于今日收益，但持仓市值仍以主数据中的官方 `lastNav` 为准；若需要盘中估算口径，再调用 `get_item_estimate` 获取 `estimatedNav`。
 
 当前 App 口径：持仓市值和持有收益只按云端主数据中的官方 `lastNav` 计价；盘中估算只用于 `dayProfit`（今日收益），不会回填持仓市值。`cumulativeProfit` 是本 App 已记录交易推导的累计收益，不代表用户所有平台/历史清仓买卖的完整累计收益。`get_records` 会读取云端主数据里的 `userPreferences.fundDataSourceMode` 和基金级 `dataSourceMode`，自动按用户选择的行情源请求估值。
+
+`huahua` 是稳定的花花托管策略身份，不等于某一个固定内部实现。需要排查实际链路时读取 `holdings[].estimateAudit` 的 `provider`、`engine`、`coverage`、`fallback`；这些字段仅供内部审计。面向用户只说明“官方发布”或具体估算种类及覆盖率，不展示“自研”“低置信”等内部标签。
 
 用户专门询问定投计划时，调用只读工具：
 
@@ -300,9 +302,9 @@ get_item_estimate({"codes": ["110022"]})
 - `codes` 最多 50 个。
 - 可批量传入，避免逐个调用。
 - 结果同一 session 内缓存 60 秒。
-- 可传 `default_data_source_mode`（`huahua`/`b`/`c`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；未知值会直接报错，不能假定已回退到 `huahua`。
+- 可传 `default_data_source_mode`（`source_a`/`source_b`/`huahua`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；默认是 `source_a`，只有 Pro 可切换，未知值会直接报错。
 - 必须检查顶层 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`；部分返回或 timeout 占位帧不能当成整批成功。
-- 新浪 B/C 对部分基金没有覆盖时，只表示对应基金或来源不可用；必须按代码检查上述集合，不能把单来源缺失描述成整批基金请求失败。
+- 数据来源 A/B 对部分基金没有覆盖时，只表示对应基金或来源不可用；必须按代码检查上述集合，不能把单来源缺失描述成整批基金请求失败。
 
 ### 4.2 用户只提供基金名称
 
@@ -339,13 +341,13 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
 选择规则：
 - 当前估算/涨跌：`get_item_estimate`。
 - 对比同一基金的多个行情源：`get_fund_source_previews`。来源面板不是统一的“实时估值”：
-  净值公布后，每个来源可能返回收盘前归档估值、当前新浪接口已切换的官方值，
-  权威官方净值，或花花的 `sector_proxy_estimate` 关联标的/关联板块兜底。必须同时检查
+  净值公布后，每个来源可能返回收盘前归档估值、当前上游 A/B 已切换的官方值，
+  权威官方净值，或花花严格证据链产出的关联标的估算。必须同时检查
   条目的 `source` 与 `last_estimate_snap.source`；
-  `data` 缺少 B/C 只表示单来源覆盖或归档不足，不代表整个请求失败。
-- 显式选择新浪 B/C 但该源无覆盖时，后端会继续回退完整花花链路（包含
-  `sector_proxy_estimate`）；检查 `dataSourceSelection.fellBackToHuahua`，不得把回退值
-  误述为新浪值。该回退只影响对应基金，不应把整批请求判为失败。
+  `data` 缺少数据来源 A/B 只表示单来源覆盖或归档不足，不代表整个请求失败。
+- 显式选择数据来源 A/B 但该源无覆盖时，后端会继续回退完整花花链路；检查
+  `dataSourceSelection.fellBackToHuahua`，不得把回退值
+  误述为上游 A/B 的值。该回退只影响对应基金，不应把整批请求判为失败。
 - 历史走势：`get_item_history`。
 - 申购状态、QDII/限大额日累计限购金额、确认天数：`get_fund_fees`（单只）或 `get_batch_fund_fees`（批量，最多 50 只）；批量结果检查 `complete` 和 `missingCodes`。
 - 分红派息：`get_item_dividends`。
@@ -636,46 +638,6 @@ update_agent_request({
 ```
 
 不要替 App 把请求标记为 `PROCESSED`；MCP 会拒绝该状态，只有 App 能在用户确认后设置。
-
-### 5.3 个人报告投递
-
-仅当用户明确要求生成并保存个人报告时使用：
-
-```json
-submit_personal_strategy_report({
-  "title": "7月1日 个人组合复盘",
-  "summary": "今日组合主要受科技和黄金方向影响。",
-  "payload": {
-    "kind": "evening",
-    "date": "2026-07-01",
-    "body": "个人报告正文",
-    "sections": [
-      {
-        "id": "portfolio",
-        "title": "组合影响",
-        "items": [
-          {
-            "label": "科技方向",
-            "text": "结合用户授权读取的持仓和公开行情做个人化说明。",
-            "impact": "mixed",
-            "confidence": "medium"
-          }
-        ]
-      }
-    ],
-    "riskNotes": ["不构成投资建议，仅供复盘参考。"]
-  },
-  "client_message_id": "personal:2026-07-01:evening"
-})
-```
-
-规则：
-- 该工具只投递到当前 Agent Token 所属用户的报告中心。
-- 需要显式 `messages:write` scope；如需同一个 token 同时读取持仓并投递个人报告，使用 `agent:full messages:write`。
-- 默认 `agent:full` 不含个人报告写入；不要使用 `hermes:write`。
-- 可以基于用户明确授权读取的持仓、交易流水和行情数据生成个人报告。
-- 不能广播，不能指定 `user_id`，不得声称发送给所有用户。
-- 不得调用 `/api/hermes/reports`；公开 MCP 不提供管理员公共报告写入工具。
 
 ## 6. 截图导入
 
