@@ -88,6 +88,10 @@ def _raise_auth_error(response: httpx.Response) -> None:
                 "无权读取量化策略上下文：请确认账号为 PRO 会员，"
                 "且 Agent Token 包含 quant:read scope。"
             )
+        if response.request.url.path == "/api/agent/messages":
+            raise ValueError(
+                "无权写入个人报告：请确认账号为 PRO 会员，且 Agent Token 有效。"
+            )
         raise ValueError("无访问权限，请确认 Agent Token 正确，且账号为 PRO 会员。")
 
 

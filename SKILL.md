@@ -639,6 +639,33 @@ update_agent_request({
 
 不要替 App 把请求标记为 `PROCESSED`；MCP 会拒绝该状态，只有 App 能在用户确认后设置。
 
+### 5.3 个人报告投递
+
+仅在用户明确要求生成并保存报告时调用：
+
+```json
+submit_personal_strategy_report({
+  "title": "8月2日 个人组合复盘",
+  "summary": "今日组合主要受科技和黄金方向影响。",
+  "payload": {
+    "kind": "evening",
+    "date": "2026-08-02",
+    "body": "基于用户已授权数据生成的报告正文。",
+    "sections": [],
+    "riskNotes": ["不构成投资建议，仅供复盘参考。"]
+  },
+  "client_message_id": "personal:2026-08-02:evening"
+})
+```
+
+规则：
+
+- 只投递到当前 Agent Token 所属用户的报告中心，不能指定 `user_id`，不能广播。
+- Pro 用户在 App 创建的默认 Agent Token 已具备该权限，无需额外选择。
+- 同一报告重试必须复用 `client_message_id`；同一 ID 携带不同内容会被服务端拒绝。
+- 可使用用户明确授权读取的持仓、交易和行情生成报告。
+- 不得调用 `/api/hermes/reports`；该接口只属于管理员开发者 MCP。
+
 ## 6. 截图导入
 
 ### 6.1 持仓/自选截图识别

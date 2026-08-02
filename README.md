@@ -245,6 +245,8 @@ clawhub install huahua-daily
 - 用户想买入/卖出时，必须先确认基金名称、代码、金额或份额、卖出模式和分组，再调用 request_transaction；指定分组时优先传稳定的 `group_id`。
 - request_transaction 只发送待确认信号，必须明确告知用户需要打开 App 确认。
 - 7 天内重试同一交易或导入请求时必须复用 `client_request_id`，服务端会保留该窗口内的幂等记录，避免产生重复待确认 Banner；超过窗口请生成新的请求 ID。
+- 用户明确要求生成并保存个人报告时，调用 `submit_personal_strategy_report` 投递到当前 Token 所属用户的报告中心；重试同一报告必须复用 `client_message_id`。
+- Pro 用户创建的默认 Agent Token 已支持个人报告写入；不能指定其他用户或广播。
 - 不得调用 /api/hermes/reports；公开 MCP 不提供管理员公共报告写入能力。
 - 截图导入先调用 import_holding_screenshots 或 import_transaction_screenshots。
 - 对 unmatched / ambiguous 条目只做轻确认，补齐基金代码、日期、金额、份额等识别歧义。
@@ -344,6 +346,10 @@ clawhub install huahua-daily
 - `request_transaction(item_code, item_name, record_type, amount=0, date="", note="", group_name="", group_id="", sell_mode="AMOUNT", shares=0, client_request_id="")`：买入使用 `amount`；卖出明确选择 `AMOUNT` 或 `SHARES`。指定分组优先传 `group_id`；7 天内重试必须复用 `client_request_id`。
 - `get_agent_requests()`
 - `update_agent_request(request_id, status="DISMISSED")`：只允许撤回待确认提示；`PROCESSED` 必须由 App 在用户确认后设置。
+
+个人报告：
+
+- `submit_personal_strategy_report(title, summary, payload, client_message_id="")`：将当前 Agent 生成的报告保存到 Token 所属用户自己的报告中心。默认 Agent Token 即可使用，只能自投递；不得调用管理员 `/api/hermes/reports` 接口。
 
 截图导入：
 

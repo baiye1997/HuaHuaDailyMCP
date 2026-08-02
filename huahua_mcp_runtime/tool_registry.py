@@ -1,9 +1,9 @@
 """Public MCP tool ordering and registration."""
 
-from .tools import community, fund, import_tools, market, portfolio, portfolio_actions, quant, system
+from .tools import community, fund, import_tools, market, portfolio, portfolio_actions, quant, reports, system
 
 
-TOOL_MODULES = (system, fund, market, portfolio, portfolio_actions, import_tools, community, quant)
+TOOL_MODULES = (system, fund, market, portfolio, reports, portfolio_actions, import_tools, community, quant)
 TOOL_NAMES = (
     "set_token",
     "get_tool_manifest",
@@ -52,6 +52,7 @@ TOOL_NAMES = (
     "get_tags",
     "get_records",
     "get_summary",
+    "submit_personal_strategy_report",
     "request_transaction",
     "get_agent_requests",
     "update_agent_request",
