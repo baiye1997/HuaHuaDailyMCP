@@ -12,6 +12,8 @@ _HISTORICAL_ESTIMATE_SOURCES = {
     "estimate",
     "p6_b",
     "p6_c",
+    "p6_external_a",
+    "p6_external_b",
     "official_overseas_est",
     "index_direct_estimate",
     "reference_direct_estimate",
@@ -19,6 +21,7 @@ _HISTORICAL_ESTIMATE_SOURCES = {
     "gold_spot",
     "huahua_stock",
     "huahua_bond",
+    "sector_proxy_estimate",
 }
 
 
@@ -30,7 +33,6 @@ def estimate_frame_available(item: dict) -> bool:
         "reset",
         "timeout",
         "unavailable",
-        "sector_proxy_estimate",
     }:
         return False
     decision = item.get("estimateDecision")

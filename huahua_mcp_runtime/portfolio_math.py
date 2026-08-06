@@ -289,7 +289,6 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
         "reset",
         "timeout",
         "unavailable",
-        "sector_proxy_estimate",
     }
     current_estimated_nav = to_float(estimate.get("estimatedNav") or estimate.get("nav"))
     current_previous_nav = to_float(estimate.get("prev_dwjz") or estimate.get("prevNav"))
