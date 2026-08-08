@@ -80,7 +80,7 @@ async def get_community_ranking(tab: str = "weekly", page: int = 1, page_size: i
     """
     _require_token()
     if tab not in ("weekly", "monthly", "total"):
-        tab = "weekly"
+        raise ValueError("tab 仅支持 weekly、monthly 或 total")
     return await _get("/api/community/ranking", params={
         "tab": tab,
         "page": max(1, page),

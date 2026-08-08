@@ -143,16 +143,23 @@ def _translate_transport_error(error: Exception) -> None:
     raise error
 
 
+def _decode_json(response: httpx.Response) -> dict | list:
+    try:
+        return response.json()
+    except ValueError:
+        raise RuntimeError("服务器返回了无法解析的响应，请稍后重试。") from None
+
+
 async def get(path: str, params: dict = None) -> dict:
     try:
         response = await get_client().get(url(path), params=params, headers=headers())
         _raise_auth_error(response)
         response.raise_for_status()
-        return response.json()
     except ValueError:
         raise
     except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
+    return _decode_json(response)
 
 
 async def get_optional(path: str, params: dict = None) -> Optional[dict]:
@@ -162,11 +169,11 @@ async def get_optional(path: str, params: dict = None) -> Optional[dict]:
         if response.status_code == 404:
             return None
         response.raise_for_status()
-        return response.json()
     except ValueError:
         raise
     except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
+    return _decode_json(response)
 
 
 async def post(path: str, body: dict = None, params: dict = None) -> dict:
@@ -174,11 +181,11 @@ async def post(path: str, body: dict = None, params: dict = None) -> dict:
         response = await get_client().post(url(path), params=params, json=body or {}, headers=headers())
         _raise_auth_error(response)
         response.raise_for_status()
-        return response.json()
     except ValueError:
         raise
     except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
+    return _decode_json(response)
 
 
 async def post_files(
@@ -197,11 +204,11 @@ async def post_files(
         )
         _raise_auth_error(response)
         response.raise_for_status()
-        return response.json()
     except ValueError:
         raise
     except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
+    return _decode_json(response)
 
 
 async def put(path: str, body: dict = None) -> dict:
@@ -209,11 +216,11 @@ async def put(path: str, body: dict = None) -> dict:
         response = await get_client().put(url(path), json=body or {}, headers=headers())
         _raise_auth_error(response)
         response.raise_for_status()
-        return response.json()
     except ValueError:
         raise
     except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
+    return _decode_json(response)
 
 
 async def delete(path: str) -> dict:
@@ -221,8 +228,8 @@ async def delete(path: str) -> dict:
         response = await get_client().delete(url(path), headers=headers())
         _raise_auth_error(response)
         response.raise_for_status()
-        return response.json()
     except ValueError:
         raise
     except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
+    return _decode_json(response)

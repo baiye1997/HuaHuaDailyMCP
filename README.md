@@ -110,6 +110,40 @@ HuahuaDaily 主仓库联调使用工作区 MCP，避免调用已安装的生产�
 .venv/bin/python scripts/test-local-quant-mcp.py
 ```
 
+### 工具面 profile
+
+MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默认 `full`：
+
+- `full`（默认，76 个工具）：全部能力，兼容历史配置。
+- `core`（35 个工具）：仅高频日常能力（持仓、行情、交易请求、截图导入、量化上下文），
+  适合希望减少工具 schema 注入与选择成本的 Agent。core 下取消的工具会返回
+  unknown-tool 错误；manifest 的 `capabilities` 与 `safety` 会同步收窄。
+
+```json
+{
+  "mcpServers": {
+    "huahua-daily": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/baiye1997/HuaHuaDailyMCP", "huahua-daily"],
+      "env": {
+        "HUAHUA_API_BASE": "https://api.huahuadaily.cn",
+        "HUAHUA_AGENT_TOKEN": "你的Token",
+        "HUAHUA_MCP_PROFILE": "core"
+      }
+    }
+  }
+}
+```
+
+`get_tool_manifest()` 返回当前 profile 与可用能力清单，Agent 可据此自检。
+
+### 版本 3.3.0 变更
+
+- 取消工具：`get_app_versions`、`get_indices`、`get_danmaku`、`send_danmaku`、
+  `get_notices`、`get_community_notices`（不再注册）。
+- 新增 `HUAHUA_MCP_PROFILE`（core/full）工具面过滤。
+- 其余 76 个工具的名称、参数与语义不变。
+
 ### 包结构
 
 发行物由兼容入口和 runtime package 共同组成，不支持 `server.py` 单文件分发：
@@ -126,7 +160,7 @@ mcp-server/
     ├── version.py               # MCP 运行时版本单一来源
     ├── portfolio_adapter.py     # 云端组合适配
     ├── portfolio_math.py        # 组合计算兼容函数
-    ├── tool_registry.py         # 81 个工具的固定顺序与注册
+    ├── tool_registry.py         # 工具注册与 core/full profile 过滤（默认 76 个，core 35 个）
     ├── validation.py            # 输入校验
     └── tools/                   # fund/market/portfolio/community/quant 等领域工具
 ```
@@ -152,7 +186,7 @@ npm run backend:lint
 `huahua_mcp_runtime/version.py` 中的版本。仓库质量门会比较 Git 基线并阻止遗漏；
 单纯修改 README 不要求提升运行时版本。
 
-MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和 81 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
+MCP surface 测试构建 wheel，校验 runtime/tools、console entry point 和默认 76 个工具，并在隔离目录完成安装导入。测试产物写入临时目录；`mcp-server/` 不保留 `build/`、`dist/`、`*.egg-info` 或 wheel。MCP 独立发布，`mcp-server/**` 变更归入人工发布复核。
 
 ## 各 Agent 配置示例
 
@@ -263,7 +297,7 @@ clawhub install huahua-daily
 - 社区写操作会直接生效，不是 App 待确认请求；收益同步不要凭空编造收益率，通常交给 App 自动同步。
 - 截图工具的 image_paths 会读取本机图片文件；只使用用户明确提供的路径，无法确认来源时优先使用 images_base64。
 - 用户完成 JCTI 答题后可调用 analyze_jcti 获取 AI 人格分析。
-- 查询 App 版本信息使用 get_app_version 或 get_app_versions。
+- 查询 App 版本信息使用 get_app_version。
 ```
 
 ## 工具能力
@@ -277,13 +311,14 @@ clawhub install huahua-daily
 云端实时同步与持仓：
 
 - `get_sync_meta()`：读取云端实时同步主数据更新时间、etag、大小，并返回最新云端历史快照摘要。
-- `get_raw_sync_data(include_json_text=false)`：读取解析后的完整云端实时同步主数据，优先结构化组合接口。
+- `get_raw_sync_data(include_json_text=false)`：读取解析后的完整云端实时同步主数据，优先结构化组合接口。默认复用会话内 30 秒组合缓存；`include_json_text=true` 用于导出/迁移审计，会绕过缓存重新下载原始数据。
 - `get_records(include_transactions=false)`：读取持仓、App 中可见的自选、今日估算收益和汇总；不返回已送养隐藏项，同代码的显式自选优先；会自动使用云端主数据里的全局/单基金行情源偏好，并在已配置时返回 `autoInvestPlans`。
 - `get_summary()`：读取资产摘要。
 - `get_transactions(code="", include_pending=true)`：读取交易流水。
 - `get_transaction_ledger(start_date="", end_date="", codes?, transaction_types?, statuses?, group_id="", cursor="", limit=100, order="desc")`：读取服务端完整交易账本，含金额、份额、费用、净值日和确认日；可按持仓分组筛选；筛选与排序按 `effectiveDate = confirmDate || tradeDate`；永久删除基金不再出现。
 - `get_groups()`：读取持仓分组和自选分组。
 - `get_tags()`：读取全局标签和基金标签。
+- `get_portfolio_preferences(include_night_watch=true, include_purchase_limit=true, include_auto_invest=true, include_disciplines=true, code="")`：一次读取夜盘自选、限购观察、定投计划和止盈止损纪律四个 section（共享同一快照缓存，不产生额外网络请求）。core profile 推荐使用本聚合工具；旧单工具在 full profile 保留。
 - `get_purchase_limit_watchlist()`：读取 App 限购观察列表（来自云端实时同步主数据）。
 - `get_auto_invest_plans(code="")`：只读查询 App 定投计划，兼容旧版单计划和新版多计划；可按基金代码筛选，不提供任何写入能力。
 - `get_fund_disciplines(code="")`：只读查询 App 中设置的基金止盈止损纪律及触发状态；可按基金代码筛选，不提供任何写入能力。
@@ -319,7 +354,6 @@ clawhub install huahua-daily
 - `get_night_estimate(codes, force=false, view="forecast")`：QDII 基金夜间实时估值，含持仓穿透、汇率变动（需会员）。`force=true` 跳过服务端缓存；`view` 可为 `forecast` 或 `last_close`。
 - `get_night_watchlist()`：读取用户在 App 夜盘估值页手动添加的基金代码列表（来自云端实时同步主数据），通常作为 `get_night_estimate` 的前置工具，免去用户手动报代码。
 - `get_purchase_limit_watchlist()`：读取用户在 App 限购观察页保存的基金列表；可配合 `get_fund_fees` 检查申购状态和限购额度。
-- `get_daily_rank()`
 - `get_status()`
 - `get_overview()`
 - `get_sector_wind()`：板块风向，返回领涨/领跌板块和数据时间。
@@ -327,7 +361,6 @@ clawhub install huahua-daily
 - `get_sector_metrics()`：全部行业/主题 ETF 代理的服务端 MA、收益、回撤、波动和强弱排名；同样返回独立历史新鲜度，Agent 不再自行计算。
 - `get_yesterday_rank()`：上一交易日基金涨跌榜。
 - `get_fund_flow()`：资金流向数据（需 PRO 会员）；`sectorFlow` 非空时同时提供 industry 与 concept，分类由 last-good 补齐时返回 `categoryFreshness`、`categoryPolledAt`。
-- `get_indices()`
 - `get_benchmark_history(code="sh000300")`
 - `calculate_trading_dates(date, time_mode="PRE_MARKET", confirm_days=1)`：返回的 `data_date` 是按 `nav_date` 与 `confirm_days` 反推的估值反映日，并以 `data_date_inferred=true`、`data_date_basis=nav_date_minus_confirm_days_offset` 公示来源；它不是上游已观察到的官方净值 D 日、公布日或收益归属 G 日。
 - `get_next_trading_day(date)`
@@ -357,18 +390,14 @@ clawhub install huahua-daily
 - `import_transaction_screenshots(image_paths?, images_base64?)`：识别交易流水截图，返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
 - `request_import_review(import_type, items, source_note="Agent screenshot import", client_request_id="")`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`；7 天内重试必须复用 `client_request_id`。
 
-社区与公告：
+社区：
 
-- `get_danmaku(code)`
-- `send_danmaku(fund_code, text)`：发送弹幕，颜色由 App 根据涨跌自动设置
-- `get_notices(since=0)`
 - `get_community_ranking(tab="weekly", page=1, page_size=50)`：收益率排行榜（周/月/总）。
 - `get_community_my_rank()`：我的排名。
 - `get_community_user(uid)`：用户详情（十大重仓前5）。
 - `get_community_stats()`：关注/粉丝数。
 - `get_community_following()`：关注列表。
 - `search_community_users(query)`：搜索用户（UID/昵称）。
-- `get_community_notices(since=0)`：社区定向通知。
 - `get_community_authorization()`：查询社区授权状态。
 - `authorize_community(show_amount, anonymous)`：授权参与喵舍排行，直接生效，调用前必须确认。
 - `revoke_community_authorization()`：取消授权，退出排行，直接生效，调用前必须确认。
@@ -381,7 +410,6 @@ JCTI 投资人格：
 版本信息：
 
 - `get_app_version()`：最新版本号、更新日志、下载地址。
-- `get_app_versions(page, page_size)`：版本历史列表（分页）。
 
 ## 截图导入流程
 

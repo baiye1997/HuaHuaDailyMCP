@@ -8,6 +8,7 @@ from .portfolio_preferences import (
     get_auto_invest_plans,
     get_fund_disciplines,
     get_night_watchlist,
+    get_portfolio_preferences,
     get_purchase_limit_watchlist,
 )
 
@@ -15,6 +16,7 @@ __all__ = (
     "get_auto_invest_plans",
     "get_fund_disciplines",
     "get_night_watchlist",
+    "get_portfolio_preferences",
     "get_purchase_limit_watchlist",
 )
 
@@ -103,10 +105,17 @@ async def get_raw_sync_data(include_json_text: bool = False) -> dict:
 
     Args:
         include_json_text: 是否同时返回服务端原始 json_data 字符串；只有做导出/迁移审计时才建议开启。
+            开启时该调用绕过会话缓存并重新下载完整原始数据。
     """
     _require_token()
-    raw, source = await _download_portfolio_raw()
-    parsed = _unwrap_sync_payload(raw if isinstance(raw, dict) else {}, source=source)
+    if include_json_text:
+        raw, source = await _download_portfolio_raw()
+        parsed = _unwrap_sync_payload(raw if isinstance(raw, dict) else {}, source=source)
+        json_text = raw.get("json_data", "") if isinstance(raw, dict) else ""
+    else:
+        parsed = await _download_portfolio()
+        source = parsed.get("_meta_data_source", "structured_portfolio")
+        json_text = ""
     result = {
         "data": {k: v for k, v in parsed.items() if not k.startswith("_meta_")},
         "meta": {
@@ -120,7 +129,7 @@ async def get_raw_sync_data(include_json_text: bool = False) -> dict:
         },
     }
     if include_json_text:
-        result["json_data"] = raw.get("json_data", "") if isinstance(raw, dict) else ""
+        result["json_data"] = json_text
     return result
 
 
@@ -203,7 +212,8 @@ async def get_records(include_transactions: bool = False) -> dict:
 
     返回结构：
     - holdings: 有持仓的记录列表（含实时收益计算、autoInvestPlans 和 disciplines）
-    - watchlist: App 中可见的观察列记录（排除已送养隐藏项；有配置时包含 autoInvestPlans 和 disciplines）
+    - watchlist: App 中可见的观察列记录（排除已送养隐藏项；含盘中估算
+      estimatedNav/estimatedChangePercent；有配置时包含 autoInvestPlans 和 disciplines）
     - summary: 持仓汇总（总市值/今日收益/持有收益/持有收益率/累计收益/在途金额）
       - todayProfitRate: 今日/昨日收益率（todayProfit / totalDayBaseMarketValue × 100%，分母为归属日组合期初市值）
       - totalDayBaseMarketValue: 今日/昨日收益率使用的组合期初市值
@@ -237,14 +247,7 @@ async def get_records(include_transactions: bool = False) -> dict:
     if max_drawdown_limit_pct != 0 and not 5 <= max_drawdown_limit_pct <= 30:
         max_drawdown_limit_pct = 10.0
 
-    # 2. 找出有持仓的项目编号。显式自选记录不得误归入持仓。
-    held_codes = [
-        f["code"]
-        for f in funds
-        if f.get("isWatchlist") is not True and _to_float(f.get("holdingShares")) > 0
-    ]
-
-    # 与 App getWatchlistFundsByGroup 的可见性语义一致：如果同代码已有显式
+    # 2. 与 App getWatchlistFundsByGroup 的可见性语义一致：如果同代码已有显式
     # 自选记录，不再把清仓持仓记录重复展示为自选。
     explicit_watchlist_codes = {
         str(fund.get("code") or "").strip()
@@ -252,9 +255,29 @@ async def get_records(include_transactions: bool = False) -> dict:
         if fund.get("isWatchlist") is True
     }
 
-    # 3. 并行批量获取今日估算数值（共享 60s 缓存）
+    # 3. 并行批量获取今日估算数值（共享 60s 缓存）。
+    # 与 App 刷新口径一致：持仓和可见观察列（非送养）都请求盘中估算，
+    # 送养隐藏项不请求，避免无谓的开销。
+    estimate_codes = [
+        str(fund.get("code") or "").strip()
+        for fund in funds
+        if (
+            _is_valid_fund_code_value(fund.get("code"))
+            and (
+                (fund.get("isWatchlist") is not True and _to_float(fund.get("holdingShares")) > 0)
+                or (
+                    fund.get("isWatchlist") is True
+                    or (
+                        _to_float(fund.get("holdingShares")) == 0
+                        and str(fund.get("code") or "").strip() not in explicit_watchlist_codes
+                        and fund.get("clearedHideFromWatchlist") is not True
+                    )
+                )
+            )
+        )
+    ]
     estimate_map: dict = {}
-    if held_codes:
+    if estimate_codes:
         default_mode = _normalize_data_source_mode(user_preferences.get("fundDataSourceMode"))
         mode_by_code = {}
         for fund in funds:
@@ -265,7 +288,7 @@ async def get_records(include_transactions: bool = False) -> dict:
             if fund_mode or code not in mode_by_code:
                 mode_by_code[code] = _normalize_data_source_mode(fund_mode or default_mode)
         estimate_map = await _fetch_estimates(
-            held_codes,
+            estimate_codes,
             default_data_source_mode=default_mode,
             data_source_mode_by_code=mode_by_code,
         )

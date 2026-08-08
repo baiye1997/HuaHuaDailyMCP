@@ -147,7 +147,17 @@ async def fetch_estimates(
         if not miss_codes:
             return result
         if len(estimate_cache) > 500:
-            estimate_cache.clear()
+            # 先驱逐过期条目，保留仍新鲜的帧；若全部新鲜仍超限（极端积压），
+            # 兜底全清避免每次请求都重复遍历且永远清不掉。
+            cutoff = time.monotonic() - runtime["_ESTIMATE_TTL"]
+            for key in [
+                key
+                for key, entry in estimate_cache.items()
+                if entry.get("ts", 0) < cutoff
+            ]:
+                estimate_cache.pop(key, None)
+            if len(estimate_cache) > 500:
+                estimate_cache.clear()
         inflight_key = (
             f"generation:{session_generation}",
             *(sorted(cache_key(code) for code in miss_codes)),

@@ -92,7 +92,9 @@ get_records({"include_transactions": false})
 
 返回重点：
 - `holdings`：有持仓的基金；已配置定投时含 `autoInvestPlans`。
-- `watchlist`：App 中可见的自选或清仓观察项；不包含已送养隐藏项，同代码的显式自选优先；已配置定投时含 `autoInvestPlans`。
+- `watchlist`：App 中可见的自选或清仓观察项；不包含已送养隐藏项，同代码的显式自选优先；
+  与 App 刷新口径一致，含盘中估算（`estimatedNav`/`estimatedChangePercent`，观察列不按估算计价）；
+  已配置定投时含 `autoInvestPlans`。
 - `groups`：分组。
 - `summary`：汇总。
 - `dataUpdatedAt`：云端实时同步主数据时间。
@@ -103,21 +105,15 @@ get_records({"include_transactions": false})
 
 `huahua` 是稳定的花花托管策略身份，不等于某一个固定内部实现。需要排查实际链路时读取 `holdings[].estimateAudit` 的 `provider`、`engine`、`coverage`、`fallback`；这些字段仅供内部审计。面向用户只说明“官方发布”或具体估算种类及覆盖率，不展示“自研”“低置信”等内部标签。
 
-用户专门询问定投计划时，调用只读工具：
+用户询问定投计划、止盈止损纪律、夜盘自选或限购观察等组合偏好时，优先使用聚合只读工具一次取回（共享同一快照缓存，不产生额外网络请求）：
 
 ```json
-get_auto_invest_plans({"code": ""})
+get_portfolio_preferences({"include_night_watch": true, "include_purchase_limit": true, "include_auto_invest": true, "include_disciplines": true, "code": ""})
 ```
 
-可传 6 位基金代码筛选。返回兼容旧版单定投和新版多定投；该工具不会创建、修改、暂停或删除计划。
+返回 `nightWatch`（夜盘自选代码，可传给 `get_night_estimate`）、`purchaseLimit`（限购观察，可配合 `get_batch_fund_fees`）、`autoInvest`（定投计划）和 `disciplines`（止盈止损纪律）四个 section。只读，不会创建、修改、暂停或删除任何计划；不得把 `triggered=true` 描述成 Agent 已执行交易。
 
-用户询问止盈、止损或基金纪律时，调用只读工具：
-
-```json
-get_fund_disciplines({"code": ""})
-```
-
-返回条件类型、阈值、备注、触发和已知悉状态；不得把 `triggered=true` 描述成 Agent 已执行交易。该工具不会新增、修改、触发或删除纪律。
+需要单独读取某一类偏好时，也可用旧工具 `get_auto_invest_plans`、`get_fund_disciplines`、`get_night_watchlist`、`get_purchase_limit_watchlist`（full profile）。
 
 如果用户要求交易流水、成本来源、审计收益，再调用：
 
@@ -170,6 +166,11 @@ get_sync_meta()
 get_raw_sync_data({"include_json_text": false})
 ```
 
+默认复用会话内 30 秒组合缓存；若刚完成实时同步，先调用 `get_sync_meta()` 确认
+`updated_at` 已更新，再对比 `get_raw_sync_data` 返回的 `meta.updated_at`。仅当用户
+明确要求导出原始 JSON 时才设置 `include_json_text=true`（该模式绕过缓存，只用于
+导出/迁移审计，不要默认使用）。
+
 检查重点：
 - `data.funds` 是否存在且非空。
 - 若 `meta.is_confirmed_empty_portfolio_snapshot=true`，这是用户确认清空组合后的合法空组合主数据。
@@ -177,8 +178,6 @@ get_raw_sync_data({"include_json_text": false})
 - `data.globalTags` 是否存在。
 - `data.nightWatchCodes`、`data.purchaseLimitWatchItems`、`data.marketIndexSelection` 是否存在。
 - `meta.contains_ledger` 通常为 false，这是正常的。
-
-只有用户明确要求导出原始 JSON 文本时，才设置 `include_json_text=true`。默认不要返回大段 JSON。
 
 ### 3.4 用户问“标签/分组”
 
@@ -406,7 +405,8 @@ get_overview()
 主要指数：
 
 ```json
-get_indices()
+get_instrument_catalog()
+get_instrument_quotes({"codes": ["000300", "000001"]})
 ```
 
 板块风向：
@@ -810,39 +810,9 @@ request_import_review({
 - “已发送到 App，请打开花花日记批量确认。”
 - “导入尚未完成，只有 App 确认后才会写入。”
 
-## 7. 社区与公告
+## 7. 喵舍社区
 
-查看某基金弹幕：
-
-```json
-get_danmaku({"code": "110022"})
-```
-
-发送弹幕：
-
-```json
-send_danmaku({
-  "fund_code": "110022",
-  "text": "今天波动有点大"
-})
-```
-
-规则：
-- 只有用户明确要求发言时才调用 `send_danmaku`。
-- `text` 最多 30 字。
-- 弹幕颜色由 App 根据基金涨跌情况自动设置，无需手动指定。
-
-系统公告：
-
-```json
-get_notices({"since": 0})
-```
-
-`since` 是 Unix 秒时间戳；默认 0 表示拉取最近公告。
-
-### 7.1 喵舍社区
-
-排行榜：
+### 7.1 排行榜
 
 ```json
 get_community_ranking({"tab": "weekly"})
@@ -880,12 +850,6 @@ get_community_stats()
 get_community_following()
 ```
 
-社区通知（排名变化、被关注等）：
-
-```json
-get_community_notices({"since": 0})
-```
-
 授权管理：
 
 ```json
@@ -908,11 +872,11 @@ follow_community_user({"target_uid": "12345678"})
 
 规则：
 - 社区功能需要 PRO 会员。
-- `get_community_notices` 与 `get_notices` 不同：前者是个人社区通知，后者是系统公告。
 - 授权、取消授权、关注/取消关注调用后会直接生效，不会进入 App 确认页；调用前必须向用户明确确认。
 - 授权操作前须向用户确认是否愿意公开持仓数据，以及是否展示金额、是否匿名。
 - `follow_community_user` 是取反操作：已关注则取消，未关注则添加。
 - 社区排名收益由服务端基于实时云端组合数据核算，MCP 不提供手动写入收益率工具。
+- 系统公告、社区通知和弹幕属于 App 推送与展示功能，MCP 不再提供查询工具。
 
 ## 8. JCTI 投资人格分析
 
@@ -943,14 +907,6 @@ get_app_version()
 ```
 
 返回版本号、更新日志、下载地址、是否强制更新。
-
-版本历史：
-
-```json
-get_app_versions({"page": 1, "page_size": 5})
-```
-
-适合回答"最新版本有什么新功能""历史更新记录"等问题。
 
 ## 10. 常见降级
 
