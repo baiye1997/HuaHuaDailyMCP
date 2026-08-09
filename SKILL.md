@@ -670,11 +670,14 @@ submit_personal_strategy_report({
 
 ### 6.1 持仓/自选截图识别
 
-持仓截图（本地路径）：
+截图一律使用 Base64 传入（`image_paths` 本地路径已禁用，调用会直接报错，
+防止读取并上传任意本地文件）：
 
 ```json
 import_holding_screenshots({
-  "image_paths": ["/absolute/path/holding.png"],
+  "images_base64": [
+    {"filename": "holding.png", "mime": "image/png", "base64": "..."}
+  ],
   "import_type": "HOLDINGS"
 })
 ```
@@ -683,7 +686,9 @@ import_holding_screenshots({
 
 ```json
 import_holding_screenshots({
-  "image_paths": ["/absolute/path/watchlist.png"],
+  "images_base64": [
+    {"filename": "watchlist.png", "mime": "image/png", "base64": "..."}
+  ],
   "import_type": "WATCHLIST"
 })
 ```
@@ -699,7 +704,7 @@ import_holding_screenshots({
 })
 ```
 
-本地路径模式会让 MCP server 读取并上传用户机器上的对应图片文件。只使用用户明确提供或当前对话中产生的截图路径；不要猜测、遍历或尝试读取无关文件。无法确认来源时优先使用 `images_base64`。
+本地路径模式已禁用：`image_paths` 传入会直接报错（安全限制，防止读取并上传任意本地文件），请一律使用 `images_base64`。
 
 `import_type` 说明：
 - `HOLDINGS`（默认）：持仓页面通常不显示基金代码，后端按名称四步匹配（可能出现模糊匹配）。
@@ -720,15 +725,7 @@ import_holding_screenshots({
 
 ### 6.2 交易记录截图识别
 
-本地路径：
-
-```json
-import_transaction_screenshots({
-  "image_paths": ["/absolute/path/transactions.png"]
-})
-```
-
-Base64：
+截图同样使用 Base64 传入（`image_paths` 已禁用）：
 
 ```json
 import_transaction_screenshots({
@@ -738,7 +735,7 @@ import_transaction_screenshots({
 })
 ```
 
-同样地，`image_paths` 只可用于用户明确提供的截图文件路径。
+同样地，`image_paths` 已禁用（传入会直接报错），一律使用 `images_base64`。
 
 返回重点：
 - `type`: `BUY` 或 `SELL`。

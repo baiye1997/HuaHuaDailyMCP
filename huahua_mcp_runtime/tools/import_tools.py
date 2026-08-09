@@ -34,7 +34,7 @@ async def import_holding_screenshots(
     把结果发送到 App 现有导入确认页。
 
     Args:
-        image_paths: 本地图片路径列表，适合 Codex、Claude Code 等本地 CLI/桌面 Agent。
+        image_paths: 已禁用（安全限制），必须改用 images_base64。
         images_base64: 图片对象列表，格式 {filename, mime, base64}。
         import_type: "HOLDINGS"（持仓，默认）或 "WATCHLIST"（自选）。
             自选截图通常显示 6 位基金代码，传 "WATCHLIST" 后端会用专门 prompt
@@ -75,7 +75,7 @@ async def import_transaction_screenshots(
     识别交易记录截图，只返回结构化结果，不写入 App。
 
     Args:
-        image_paths: 本地图片路径列表，适合 Codex、Claude Code 等本地 CLI/桌面 Agent。
+        image_paths: 已禁用（安全限制），必须改用 images_base64。
         images_base64: 图片对象列表，格式 {filename, mime, base64}。
     """
     _require_token()

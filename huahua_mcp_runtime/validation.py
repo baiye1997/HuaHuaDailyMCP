@@ -3,7 +3,6 @@
 import base64
 import math
 import mimetypes
-import os
 import re
 from datetime import datetime
 from typing import Optional
@@ -102,15 +101,14 @@ def normalize_upload_files(
     images_base64: Optional[list[dict]] = None,
 ) -> list[tuple[str, bytes, str]]:
     files: list[tuple[str, bytes, str]] = []
-    for path in image_paths or []:
-        clean_path = os.path.expanduser(str(path))
-        if not os.path.isfile(clean_path):
-            raise ValueError(f"图片文件不存在：{path}")
-        with open(clean_path, "rb") as file:
-            content = file.read()
-        mime = mimetypes.guess_type(clean_path)[0] or "application/octet-stream"
-        mime = validate_image_file(clean_path, content, mime)
-        files.append((os.path.basename(clean_path), content, mime))
+    if image_paths:
+        # Local file reads are disabled by default: an agent (or a
+        # prompt-injected agent) could otherwise exfiltrate arbitrary files
+        # (e.g. ~/.ssh/*, ~/.aws/*) to the backend screenshot service. Agents
+        # must pass image content via images_base64 instead.
+        raise ValueError(
+            "image_paths 已禁用，请改用 images_base64 提供图片内容"
+        )
     for index, item in enumerate(images_base64 or []):
         if not isinstance(item, dict):
             raise ValueError("images_base64 每项必须是对象")
@@ -126,7 +124,7 @@ def normalize_upload_files(
         mime = validate_image_file(filename, content, mime)
         files.append((filename, content, mime))
     if not files:
-        raise ValueError("请提供 image_paths 或 images_base64")
+        raise ValueError("请提供 images_base64（image_paths 已禁用）")
     if len(files) > 10:
         raise ValueError("单次最多上传 10 张截图")
     return files

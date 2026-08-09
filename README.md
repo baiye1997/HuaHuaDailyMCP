@@ -137,6 +137,11 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 
 `get_tool_manifest()` 返回当前 profile 与可用能力清单，Agent 可据此自检。
 
+### 版本 3.3.2 变更
+
+- 安全修复：截图工具的 `image_paths` 本地路径读取已禁用（防止读取并上传任意本地文件），一律改用 `images_base64` 传图片内容；传入 `image_paths` 会直接报错。
+- 其余工具的名称、参数与语义不变。
+
 ### 版本 3.3.0 变更
 
 - 取消工具：`get_app_versions`、`get_indices`、`get_danmaku`、`send_danmaku`、
@@ -295,7 +300,7 @@ clawhub install huahua-daily
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
 - 社区写操作会直接生效，不是 App 待确认请求；收益同步不要凭空编造收益率，通常交给 App 自动同步。
-- 截图工具的 image_paths 会读取本机图片文件；只使用用户明确提供的路径，无法确认来源时优先使用 images_base64。
+- 截图工具的 image_paths 已禁用（安全限制）：必须使用 images_base64 传图片内容，本地路径会直接报错。
 - 用户完成 JCTI 答题后可调用 analyze_jcti 获取 AI 人格分析。
 - 查询 App 版本信息使用 get_app_version。
 ```
@@ -386,8 +391,8 @@ clawhub install huahua-daily
 
 截图导入：
 
-- `import_holding_screenshots(image_paths?, images_base64?, import_type="HOLDINGS")`：识别持仓/自选截图，返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 只能是 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率），未知值会直接报错。
-- `import_transaction_screenshots(image_paths?, images_base64?)`：识别交易流水截图，返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
+- `import_holding_screenshots(images_base64, import_type="HOLDINGS")`：识别持仓/自选截图（`image_paths` 已禁用，只能传 `images_base64`），返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 只能是 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率），未知值会直接报错。
+- `import_transaction_screenshots(images_base64)`：识别交易流水截图（`image_paths` 已禁用，只能传 `images_base64`），返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
 - `request_import_review(import_type, items, source_note="Agent screenshot import", client_request_id="")`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`；7 天内重试必须复用 `client_request_id`。
 
 社区：
@@ -453,6 +458,6 @@ Agent 如需完整审计，应优先读取 `get_transactions` 和 `get_raw_sync_
 - MCP 可读取敏感投资数据，包括持仓金额、交易流水和原始云端实时同步主数据；请只授权可信 Agent。
 - 交易类能力只创建待确认请求，不直接写入交易。
 - 截图导入只把识别结果发送到 App 确认页，不直接写入数据。
-- 本地截图路径 `image_paths` 会读取并上传本机图片文件；只使用用户明确提供的路径。
+- 本地截图路径 `image_paths` 已禁用，必须使用 `images_base64` 传图片内容。
 - 社区授权、取消授权、关注/取消关注、社区收益同步是直接写操作，不经过 App 确认页。
 - MCP 不提供云同步覆盖写入工具。
