@@ -174,6 +174,7 @@ async def get_portfolio_preferences(
     if include_disciplines:
         sections["disciplines"] = _disciplines_section(portfolio, validated_code)
     sections["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
+    sections["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return sections
 
 
@@ -198,6 +199,7 @@ async def get_night_watchlist() -> dict:
     portfolio = await _download_portfolio()
     result = _night_watch_section(portfolio)
     result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
+    result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result
 
 
@@ -220,6 +222,7 @@ async def get_purchase_limit_watchlist() -> dict:
     portfolio = await _download_portfolio()
     result = _purchase_limit_section(portfolio)
     result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
+    result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result
 
 
@@ -241,6 +244,7 @@ async def get_auto_invest_plans(code: str = "") -> dict:
     portfolio = await _download_portfolio()
     result = _auto_invest_section(portfolio, validated_code)
     result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
+    result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result
 
 
@@ -259,4 +263,5 @@ async def get_fund_disciplines(code: str = "") -> dict:
     portfolio = await _download_portfolio()
     result = _disciplines_section(portfolio, validated_code)
     result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
+    result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result

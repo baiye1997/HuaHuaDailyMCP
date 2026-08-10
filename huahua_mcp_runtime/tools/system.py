@@ -61,6 +61,10 @@ async def set_token(token: str) -> str:
     normalized_token = str(token or "").strip()
     if not normalized_token:
         raise ValueError("Agent Token 不能为空")
+    if len(normalized_token) > 4096:
+        raise ValueError("Agent Token 过长")
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized_token):
+        raise ValueError("Agent Token 不能包含控制字符")
     _session["token"] = normalized_token
     _clear_session_caches()
     return f"✅ Token 已设置，将连接官方后端：{_session['base_url']}"

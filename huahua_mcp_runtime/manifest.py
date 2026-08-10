@@ -227,6 +227,8 @@ def build_tool_manifest(
             "quant_data_basis": "单基金指标使用官方净值 D 日；组合回放使用 linked_daily_return_v1 的 G 日归属；QDII 夜盘仅作执行参考；回测零费率；不宣称严格 point-in-time。",
             "public_report_write": False,
             "cloud_sync_read": "get_records/get_summary/get_raw_sync_data 读取云端实时同步主数据；固定使用结构化组合接口，不读取云端历史备份快照。",
+            "portfolio_freshness": "组合新鲜度只看 portfolioUpdatedAt/dataUpdatedAt（原始接口为 meta.portfolio_updated_at）；data.timestamp 是客户端谱系/迁移元数据，不得作为同步时间。",
+            "valuation_basis": "marketValue 使用不晚于北京时间今日的最新官方净值锚点：优先比较行情帧 dwjz/last_nav_date 与组合快照 lastNav/lastNavDate；estimatedNav 只进入 estimatedMarketValue，不进入官方市值。",
             "estimate_timeout_handling": "timeout、stale last-good 或 estimateDecision=unavailable 的帧不参与当日收益；检查 summary.estimateCompleteness，不能把不可用帧的 0 元当成真实零涨跌。",
             "cloud_sync_write": False,
             "cloud_history_snapshot_write": False,

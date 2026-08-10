@@ -13,6 +13,8 @@ DATA_SOURCE_MODES = {"source_a", "source_b", "huahua"}
 LEGACY_DATA_SOURCE_MODES = {"b": "source_a", "c": "source_b"}
 DATA_SOURCE_PREFERENCE_EPOCH = 1
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
+MAX_UPLOAD_TOTAL_SIZE = 50 * 1024 * 1024
+MAX_UPLOAD_FILES = 10
 
 
 def detect_image_mime(content: bytes) -> Optional[str]:
@@ -109,24 +111,37 @@ def normalize_upload_files(
         raise ValueError(
             "image_paths 已禁用，请改用 images_base64 提供图片内容"
         )
-    for index, item in enumerate(images_base64 or []):
+    items = images_base64 or []
+    if not isinstance(items, list):
+        raise ValueError("images_base64 必须是数组")
+    if len(items) > MAX_UPLOAD_FILES:
+        raise ValueError(f"单次最多上传 {MAX_UPLOAD_FILES} 张截图")
+    total_size = 0
+    for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise ValueError("images_base64 每项必须是对象")
-        filename = str(item.get("filename") or f"image_{index + 1}.png")
+        filename = re.split(r"[/\\]", str(item.get("filename") or f"image_{index + 1}.png"))[-1].strip()
+        if not filename or len(filename) > 200 or any(ord(character) < 32 for character in filename):
+            raise ValueError("图片文件名必须为 1-200 个不含控制字符的字符")
         mime = str(item.get("mime") or mimetypes.guess_type(filename)[0] or "image/png")
         raw_base64 = str(item.get("base64") or "")
         if "," in raw_base64 and raw_base64.strip().lower().startswith("data:"):
             raw_base64 = raw_base64.split(",", 1)[1]
+        if not raw_base64:
+            raise ValueError(f"{filename} 的 base64 内容为空")
+        if len(raw_base64) > ((MAX_IMAGE_SIZE + 2) // 3) * 4 + 4:
+            raise ValueError(f"{filename} 的编码内容超过单图 10MB 限制")
         try:
             content = base64.b64decode(raw_base64, validate=True)
         except Exception:
             raise ValueError(f"{filename} 的 base64 内容无效") from None
         mime = validate_image_file(filename, content, mime)
+        total_size += len(content)
+        if total_size > MAX_UPLOAD_TOTAL_SIZE:
+            raise ValueError("单次上传图片总大小不能超过 50MB")
         files.append((filename, content, mime))
     if not files:
         raise ValueError("请提供 images_base64（image_paths 已禁用）")
-    if len(files) > 10:
-        raise ValueError("单次最多上传 10 张截图")
     return files
 
 

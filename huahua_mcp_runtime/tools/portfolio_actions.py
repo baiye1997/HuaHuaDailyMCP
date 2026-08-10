@@ -72,6 +72,11 @@ async def request_transaction(
     normalized_name = str(item_name or "").strip()
     if not normalized_name:
         raise ValueError("item_name 不能为空")
+    if len(normalized_name) > 200:
+        raise ValueError("item_name 不能超过 200 字符")
+    normalized_note = str(note or "").strip()
+    if len(normalized_note) > 1000:
+        raise ValueError("note 不能超过 1000 字符")
     validated_date = _validate_date(date)
     normalized_group_name = str(group_name or "").strip()
     normalized_group_id = str(group_id or "").strip()
@@ -85,7 +90,7 @@ async def request_transaction(
         "code": validated_code,
         "name": normalized_name,
         "date": validated_date,
-        "note": note,
+        "note": normalized_note,
     }
     if tx_type == "BUY":
         validated_amount = _validate_amount(amount)
@@ -156,8 +161,8 @@ async def update_agent_request(request_id: str, status: str) -> dict:
     """
     _require_token()
     normalized_request_id = str(request_id or "").strip()
-    if not normalized_request_id:
-        raise ValueError("request_id 不能为空")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,120}", normalized_request_id):
+        raise ValueError("request_id 仅支持 1-120 位字母、数字、下划线或连字符")
     normalized = (status or "").strip().upper()
     if normalized != "DISMISSED":
         raise ValueError("MCP 仅支持 DISMISSED；PROCESSED 必须由 App 在用户确认后设置")

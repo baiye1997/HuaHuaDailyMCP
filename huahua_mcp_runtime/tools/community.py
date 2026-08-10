@@ -2,6 +2,7 @@
 
 import asyncio  # noqa: F401
 import json  # noqa: F401
+import math
 import os  # noqa: F401
 import re  # noqa: F401
 import time  # noqa: F401
@@ -21,6 +22,13 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
+
+
+def _validate_uid(value, field_name: str = "UID") -> str:
+    normalized = str(value or "").strip()
+    if not re.fullmatch(r"\d{8}", normalized):
+        raise ValueError(f"{field_name} 必须是 8 位数字")
+    return normalized
 
 
 async def get_danmaku(code: str) -> list:
@@ -106,9 +114,7 @@ async def get_community_user(uid: str) -> dict:
         uid: 用户的 8 位 UID
     """
     _require_token()
-    normalized = str(uid or "").strip()
-    if not normalized:
-        raise ValueError("UID 不能为空")
+    normalized = _validate_uid(uid)
     return await _get(f"/api/community/user/{normalized}")
 
 
@@ -126,6 +132,8 @@ async def get_community_following() -> list:
     """
     _require_token()
     data = await _get("/api/community/following")
+    if isinstance(data, dict) and isinstance(data.get("following"), list):
+        return data["following"]
     return data if isinstance(data, list) else []
 
 
@@ -140,7 +148,11 @@ async def search_community_users(query: str) -> list:
     normalized = str(query or "").strip()
     if not normalized:
         raise ValueError("搜索关键词不能为空")
+    if len(normalized) > 50:
+        raise ValueError("搜索关键词不能超过 50 字符")
     data = await _get("/api/community/search", params={"q": normalized})
+    if isinstance(data, dict) and isinstance(data.get("users"), list):
+        return data["users"]
     return data if isinstance(data, list) else []
 
 
@@ -206,9 +218,7 @@ async def follow_community_user(target_uid: str) -> dict:
         target_uid: 目标用户的 8 位 UID
     """
     _require_token()
-    normalized = str(target_uid or "").strip()
-    if not normalized:
-        raise ValueError("target_uid 不能为空")
+    normalized = _validate_uid(target_uid, "target_uid")
     return await _post("/api/community/follow", {"target_uid": normalized})
 
 
@@ -252,7 +262,12 @@ async def analyze_jcti(
     if normalized not in valid_ids:
         raise ValueError(f"无效的 personality_id：{personality_id}，有效值：{', '.join(sorted(valid_ids))}")
     for name, val in [("ye", ye), ("wen", wen), ("sui", sui), ("duan", duan)]:
-        if not (0 <= val <= 100):
+        if (
+            isinstance(val, bool)
+            or not isinstance(val, (int, float))
+            or not math.isfinite(float(val))
+            or not 0 <= float(val) <= 100
+        ):
             raise ValueError(f"{name} 分数必须在 0-100 之间，收到：{val}")
     return await _post("/api/jcti/analyze", {
         "scores": {"ye": ye, "wen": wen, "sui": sui, "duan": duan},

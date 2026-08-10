@@ -8,6 +8,7 @@ import time  # noqa: F401
 from typing import Optional  # noqa: F401
 
 from .binding import bind_runtime
+from .night_estimate_contract import normalize_night_response as _normalize_night_response
 
 _RUNTIME_DEPENDENCIES = ("_get", "_post", "_require_token", "_validate_date", "_validate_fund_code")
 
@@ -21,6 +22,9 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
+
+
+_NIGHT_MAX_CODES = 30
 
 
 async def get_status() -> dict:
@@ -187,19 +191,32 @@ async def get_holder_ranking() -> dict:
 
 async def get_night_estimate(codes: list[str], force: bool = False, view: str = "forecast") -> dict:
     """
-    获取QDII基金的夜间实时估值（美股/港股盘后/盘前交易时段）。
+    获取 QDII 基金最近已物化的五阶段夜盘估值帧：overnight、premarket、
+    regular、after_hours 和 closed。
     返回每只基金的盘后涨跌幅、持仓穿透明细、汇率变动等数据。
-    仅在美股交易时段（北京时间夜间）数据有效，需要会员权限。
-    超过 50 个代码或传入未知 view 会直接报错，不会静默截断或改用默认值。
+    closed 是固定的最近交易时段收盘快照，其余阶段按各自 phase scope 解释；
+    不得把 closed 的历史快照冒充当前实时行情。需要会员权限。
+    最多 30 个代码；超过上限或传入未知 view 会直接报错，不会静默截断。
+    force 仅为旧客户端兼容参数，服务端不允许请求穿透共享帧缓存或触发 Yahoo 抓取。
+
+    forecast 必须检查 currentComplete、warming、frameRefreshing、staleCodes 和
+    pollerPendingCodes；availability=available/status=ready 不代表所有数据是当前帧。
+    item.fxStatus=omitted 表示本地资产涨幅仍可用、仅缺少汇率腿，不是整只基金无行情；
+    此时 item 仍可 ready，但 evidenceComplete=false。QDII 持仓模型存在时，item.calibration
+    统一返回 applied/reason/weight/modelVersion；夜盘只读取已验证模型，不在请求中训练。
+    last_close 的 freshness=stale 是固定历史收盘快照的正常语义，此时看 complete，
+    currentComplete 固定为 false。actual_session_date 是海外行情交易日，date 是
+    北京时间响应日，item.navRequiredDate/lastNavDate 才是基金净值 D 日；均不可当作
+    基金收益归属 G 日。
 
     Args:
-        codes: 基金代码列表，如 ["016665", "018147"]，最多 50 个
-        force: 是否强制刷新（跳过服务端缓存），默认 false
+        codes: 基金代码列表，如 ["016665", "018147"]，最多 30 个
+        force: 已废弃兼容参数；true/false 都只读取共享物化帧
         view: forecast（预测口径）或 last_close（上一收盘快照口径）
     """
     _require_token()
-    if len(codes) > 50:
-        raise ValueError("codes 最多支持 50 只基金")
+    if len(codes) > _NIGHT_MAX_CODES:
+        raise ValueError("codes 最多支持 30 只基金")
     if view not in {"forecast", "last_close"}:
         raise ValueError("view 仅支持 forecast 或 last_close")
     validated_codes = []
@@ -210,13 +227,19 @@ async def get_night_estimate(codes: list[str], force: bool = False, view: str = 
             validated_codes.append(normalized)
             seen.add(normalized)
     if not validated_codes:
-        return {"status": "empty", "items": []}
+        return _normalize_night_response(
+            {"status": "empty", "items": []},
+            view,
+        )
     code_str = ",".join(validated_codes)
-    params = {"codes": code_str}
-    if force:
-        params["force"] = "true"
-    params["view"] = view
-    return await _get("/api/market/night-est", params=params)
+    # Referencing the compatibility argument makes the ignored behavior
+    # explicit while ensuring it never becomes an upstream-cache bypass again.
+    _ = force
+    payload = await _get(
+        "/api/market/night-est",
+        params={"codes": code_str, "view": view},
+    )
+    return _normalize_night_response(payload, view)
 
 
 async def get_benchmark_history(code: str = "sh000300") -> list:
@@ -253,8 +276,13 @@ async def get_instrument_catalog() -> dict:
 
 async def get_instrument_quotes(codes: list[str]) -> dict:
     """
-    批量获取指数/ETF 实时行情报价。
-    适合同时查看多个指数的最新价格、涨跌幅。
+    批量获取指数/ETF 最近已物化的行情快照。
+    适合同时查看多个指数的最近价格、涨跌幅；请求本身只读缓存，缺失或陈旧
+    标的由后台修复，不会在本次请求中等待 Yahoo。
+
+    返回时必须检查 cacheMeta.freshness、missingCodes、staleCodes 和
+    repairingCodes。每项 updatedAt/quoteDate 是源行情时点，polledAt 是缓存采集
+    时点，不能用 polledAt 冒充报价发生时间。
 
     Args:
         codes: 目录中的标准代码，如 ["000300", "000001", "399001"]，最多 20 个
@@ -268,7 +296,26 @@ async def get_instrument_quotes(codes: list[str]) -> dict:
     if len(validated) > 20:
         raise ValueError("codes 最多支持 20 个市场标的")
     if not validated:
-        return {"quotes": [], "polledAt": None}
+        return {
+            "quotes": [],
+            "polledAt": None,
+            "cacheMeta": {
+                "freshness": "empty",
+                "requestedCount": 0,
+                "validCount": 0,
+                "returnedCount": 0,
+                "readyCount": 0,
+                "emptyCount": 0,
+                "staleCount": 0,
+                "missingCodes": [],
+                "staleCodes": [],
+                "repairingCodes": [],
+                "sources": {},
+                "freshnessCounts": {},
+                "polledAtMin": None,
+                "polledAtMax": None,
+            },
+        }
     code_str = ",".join(validated)
     return await _get("/api/market/indices/latest", params={"codes": code_str})
 

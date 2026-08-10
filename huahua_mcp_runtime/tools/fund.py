@@ -9,6 +9,7 @@ from typing import Optional  # noqa: F401
 
 from .binding import bind_runtime
 from .fund_estimate_helpers import (
+    estimate_evidence_summary as _estimate_evidence_summary,
     estimate_frame_available as _estimate_frame_available,
     sanitize_estimate_frame as _sanitize_estimate_frame,
     sanitize_source_preview_payload as _sanitize_source_preview_payload,
@@ -20,7 +21,6 @@ from ..quant_validation import (
 )
 
 _RUNTIME_DEPENDENCIES = ("_fetch_estimates", "_get", "_post", "_require_token", "_validate_fund_code")
-
 if False:  # pragma: no cover - populated by bind() before tool registration
     _fetch_estimates = None
     _get = None
@@ -73,15 +73,28 @@ async def get_item_estimate(
     """
     批量获取项目今日实时估算净值（最多 50 个）。
     适合查询"现在涨了多少""今天净值多少"等日常行情问题，不会附带量化计算。
-    结果在同一 session 内缓存 60 秒，与 get_records 共享缓存，无重复网络请求。
+    可用的当前新鲜帧在同一 session 内缓存 60 秒，与 get_records
+    共享缓存。reset/unavailable/cache-only miss 或 stale 帧不写入该缓存，
+    避免遮蔽后续物化恢复。
     支持新版后端多行情源：default_data_source_mode / data_source_mode_by_code。
     返回 requestedCodes、missingCodes、invalidCodes、unavailableCodes、timeoutCodes、
-    staleCodes、decisionUnavailableCodes 和 complete；部分失败、过期或决策不可用帧
-    不会伪装成完整结果。
+    staleCodes、decisionUnavailableCodes、partialCodes、complete 和 evidenceComplete。
+    complete 只表示每个代码都有可用数值；evidenceComplete 还要求没有代理、
+    汇率省略或输入不完整。每项 estimateEvidence 可给出 coverage、proxyCoverage、
+    fxStatus/fxDegraded，并在 QDII 持仓模型存在时给出统一的 calibration
+    （applied/reason/weight/modelVersion）。汇率 omitted 仍可保留本地资产涨幅和
+    可用净值，但证据为 partial；部分失败、过期或决策不可用帧不会伪装成完整结果。
     来源 A/B 对部分基金没有覆盖时，只影响对应基金或来源；必须按上述集合逐项判断，
     不能把单来源缺失解释成整批基金请求失败。
     显式选择 A/B 但该源无覆盖时，后端会继续回退花花来源。所有可信主路径和
-    同日快照均失败时会明确返回 unavailable，不会借用其他基金或板块均值造数。
+    同日快照均失败时，后端可能使用带审计标记的市场因子、QDII 市场代理或板块
+    关联兜底。普通回答只给估值时间、类型、来源、涨幅、净值和官方日期，不主动
+    枚举 partial、FX 或覆盖率；用户明确要求诊断时才展开审计证据，并且不能把
+    代理估算描述成持仓股票完整覆盖。
+
+    日期字段中，display_date 是估算展示/T 帧日期，target_nav_date 是当前帧对应的
+    目标净值 D 日，last_nav_date 是最新官方净值 D 日；可靠收益 G 日只能读取
+    get_records().returnAttributionDate，为 null 时不得用 D 日代替。
 
     Args:
         codes: 项目编号列表，如 ["000001", "110022"]，最多 50 个
@@ -132,6 +145,9 @@ async def get_item_estimate(
             "timeoutCodes": [],
             "staleCodes": [],
             "decisionUnavailableCodes": [],
+            "partialCodes": [],
+            "fxDegradedCodes": [],
+            "evidenceComplete": not invalid_codes,
             "complete": not invalid_codes,
         }
     estimate_map = await _fetch_estimates(
@@ -139,10 +155,15 @@ async def get_item_estimate(
         default_data_source_mode=validated_default_mode,
         data_source_mode_by_code=validated_mode_by_code,
     )
-    normalized_map = {
-        str(code): _sanitize_estimate_frame(value)
-        for code, value in estimate_map.items()
-    }
+    normalized_map = {}
+    for code, value in estimate_map.items():
+        item = _sanitize_estimate_frame(value)
+        if isinstance(item, dict):
+            item = {
+                **item,
+                "estimateEvidence": _estimate_evidence_summary(item),
+            }
+        normalized_map[str(code)] = item
     missing_codes = [code for code in validated_codes if code not in normalized_map]
     unavailable_codes = [
         code
@@ -173,6 +194,23 @@ async def get_item_estimate(
             normalized_map[code]["estimateDecision"].get("status") or ""
         ).strip().lower() == "unavailable"
     ]
+    partial_codes = [
+        code
+        for code in validated_codes
+        if code in normalized_map
+        and isinstance(normalized_map[code], dict)
+        and isinstance(normalized_map[code].get("estimateEvidence"), dict)
+        and normalized_map[code]["estimateEvidence"].get("partial") is True
+    ]
+    fx_degraded_codes = [
+        code
+        for code in validated_codes
+        if code in normalized_map
+        and isinstance(normalized_map[code], dict)
+        and isinstance(normalized_map[code].get("estimateEvidence"), dict)
+        and normalized_map[code]["estimateEvidence"].get("fxDegraded") is True
+    ]
+    complete = not missing_codes and not invalid_codes and not unavailable_codes
     return {
         "data": [
             normalized_map[code]
@@ -186,7 +224,10 @@ async def get_item_estimate(
         "timeoutCodes": timeout_codes,
         "staleCodes": stale_codes,
         "decisionUnavailableCodes": decision_unavailable_codes,
-        "complete": not missing_codes and not invalid_codes and not unavailable_codes,
+        "partialCodes": partial_codes,
+        "fxDegradedCodes": fx_degraded_codes,
+        "evidenceComplete": complete and not partial_codes,
+        "complete": complete,
     }
 
 
@@ -197,8 +238,9 @@ async def get_fund_source_previews(code: str) -> dict:
     净值公布后，只有同日收盘前归档估值才会出现在 last_estimate_snap；
     当前官方净值不会被改名为 A/B 的历史估值。数据来源 A/B 缺失表示
     单来源证据不足，不代表整个请求失败。
-    花花项主路径均未命中时会继续使用独立基金家族的板块均值作最终兜底；该结果
-    不会再回流进板块均值。
+    花花项主路径均未命中时可能使用板块、市场因子或 QDII 市场代理作低置信
+    partial 兜底；该结果不会再回流进聚合池。`last_estimate_snap` 会保留同日的
+    market_factor_proxy_estimate / qdii_market_proxy_estimate 历史证据。
 
     Args:
         code: 项目编号，如 "000001"

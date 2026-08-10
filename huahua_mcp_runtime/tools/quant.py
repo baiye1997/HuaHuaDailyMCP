@@ -33,6 +33,47 @@ def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
 
 
+def _validated_range(start_date: str, end_date: str) -> tuple[str, str]:
+    start = _validate_date(start_date)
+    end = _validate_date(end_date)
+    if start and end and start > end:
+        raise ValueError("start_date 不能晚于 end_date")
+    return start, end
+
+
+def _bounded_text(value, name: str, max_length: int, *, required: bool = False) -> str:
+    normalized = str(value or "").strip()
+    if required and not normalized:
+        raise ValueError(f"{name} 不能为空")
+    if len(normalized) > max_length:
+        raise ValueError(f"{name} 不能超过 {max_length} 字符")
+    return normalized
+
+
+def _positive_id(value, name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} 必须是正整数")
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} 必须是正整数") from None
+    if normalized <= 0:
+        raise ValueError(f"{name} 必须是正整数")
+    return normalized
+
+
+def _rate(value, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} 必须在 0 到 1 之间")
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} 必须在 0 到 1 之间") from None
+    if not math.isfinite(normalized) or not 0 < normalized <= 1:
+        raise ValueError(f"{name} 必须在 0 到 1 之间")
+    return normalized
+
+
 class QuantSnapshotRiskVeto(BaseModel):
     """Risk veto contract exposed in the MCP tool schema."""
 
@@ -64,13 +105,15 @@ async def get_transaction_ledger(
 ) -> dict:
     """获取完整交易账本，含金额、份额、费用、净值日与确认日，可分页。永久删除的基金不会出现。"""
     _require_token()
+    start_date, end_date = _validated_range(start_date, end_date)
+    normalized_group_id = _bounded_text(group_id, "group_id", 120)
     params = {
         "start_date": _validate_date(start_date) or None,
         "end_date": _validate_date(end_date) or None,
         "codes": [_validate_fund_code(code) for code in (codes or [])],
         "types": [str(value) for value in (transaction_types or [])],
         "statuses": [str(value) for value in (statuses or [])],
-        "group_ids": [str(group_id).strip()] if str(group_id).strip() else [],
+        "group_ids": [normalized_group_id] if normalized_group_id else [],
         "cursor": cursor or None,
         "limit": min(500, max(1, int(limit))),
         "order": order if order in {"asc", "desc"} else "desc",
@@ -89,10 +132,11 @@ async def get_batch_fund_nav_history(
     validated = list(dict.fromkeys(_validate_fund_code(code) for code in codes))
     if not validated or len(validated) > 20:
         raise ValueError("codes 需要包含 1-20 个有效基金代码")
+    start_date, end_date = _validated_range(start_date, end_date)
     return await _post("/api/funds/nav-history/batch", {
         "codes": validated,
-        "start_date": _validate_date(start_date) or None,
-        "end_date": _validate_date(end_date) or None,
+        "start_date": start_date or None,
+        "end_date": end_date or None,
         "order": order if order in {"asc", "desc"} else "asc",
     })
 
@@ -107,14 +151,16 @@ async def get_portfolio_nav_history(
     _require_token()
     if not end_date:
         end_date = _beijing_date_string()
+    end_date = _validate_date(end_date)
     if not start_date:
         from datetime import datetime, timedelta
         start_date = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=365)).strftime("%Y-%m-%d")
+    start_date, end_date = _validated_range(start_date, end_date)
     params = {
-        "start_date": _validate_date(start_date),
-        "end_date": _validate_date(end_date),
+        "start_date": start_date,
+        "end_date": end_date,
         "benchmark_code": _validate_fund_code(benchmark_code) if benchmark_code else None,
-        "group_id": group_id or None,
+        "group_id": _bounded_text(group_id, "group_id", 120) or None,
         "methodology_version": "linked_daily_return_v1",
     }
     return await _get("/api/portfolio/performance", params={key: value for key, value in params.items() if value})
@@ -128,11 +174,12 @@ async def get_portfolio_trade_review(
 ) -> dict:
     """获取与 App 策略实验室一致的加减仓复盘和 T1/T7/T20/T60 后续表现。"""
     _require_token()
+    start_date, end_date = _validated_range(start_date, end_date)
     params = {
-        "start_date": _validate_date(start_date),
-        "end_date": _validate_date(end_date),
+        "start_date": start_date,
+        "end_date": end_date,
         "benchmark_code": _validate_fund_code(benchmark_code) if benchmark_code else None,
-        "group_id": group_id or None,
+        "group_id": _bounded_text(group_id, "group_id", 120) or None,
     }
     return await _get("/api/portfolio/trade-review", params={key: value for key, value in params.items() if value})
 
@@ -157,7 +204,7 @@ async def get_quant_strategy_context(
         raise ValueError("view 仅支持 compact/full")
     params = {
         "asOfDate": _validate_date(as_of_date),
-        "groupId": str(group_id).strip() or None,
+        "groupId": _bounded_text(group_id, "group_id", 120) or None,
         "mode": mode,
         "historyWindow": history_window,
         "benchmarkCode": _validate_fund_code(benchmark_code),
@@ -193,8 +240,12 @@ async def run_portfolio_backtest(
     for fund in funds:
         if not isinstance(fund, dict):
             raise ValueError("funds 每项必须是 {code, weight}")
-        weight = float(fund.get("weight") or 0)
-        if not math.isfinite(weight) or not 0 < weight <= 1:
+        raw_weight = fund.get("weight")
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError):
+            raise ValueError("funds 每项的 weight 必须在 0 到 1 之间") from None
+        if isinstance(raw_weight, bool) or not math.isfinite(weight) or not 0 < weight <= 1:
             raise ValueError("funds 每项的 weight 必须在 0 到 1 之间")
         normalized_fund = {
             "code": _validate_fund_code(fund.get("code")),
@@ -210,32 +261,38 @@ async def run_portfolio_backtest(
         raise ValueError("rebalance_frequency 仅支持 none/daily/weekly/monthly/quarterly")
     if strategy_type not in {"target_rebalance", "threshold_reentry"}:
         raise ValueError("strategy_type 仅支持 target_rebalance/threshold_reentry")
-    initial_capital = float(initial_capital)
-    if not math.isfinite(initial_capital) or not 0 < initial_capital <= 1_000_000_000:
+    raw_initial_capital = initial_capital
+    try:
+        initial_capital = float(raw_initial_capital)
+    except (TypeError, ValueError):
+        raise ValueError("initial_capital 必须大于 0 且不超过 10 亿元") from None
+    if isinstance(raw_initial_capital, bool) or not math.isfinite(initial_capital) or not 0 < initial_capital <= 1_000_000_000:
         raise ValueError("initial_capital 必须大于 0 且不超过 10 亿元")
-    for field, value in {
-        "take_profit_rate": take_profit_rate,
-        "stop_loss_rate": stop_loss_rate,
-        "reentry_rate": reentry_rate,
-    }.items():
-        if not 0 < float(value) <= 1:
-            raise ValueError(f"{field} 必须在 0 到 1 之间")
+    take_profit_rate = _rate(take_profit_rate, "take_profit_rate")
+    stop_loss_rate = _rate(stop_loss_rate, "stop_loss_rate")
+    reentry_rate = _rate(reentry_rate, "reentry_rate")
+    start_date, end_date = _validated_range(start_date, end_date)
+    normalized_name = _bounded_text(name, "name", 120, required=True)
+    normalized_group_id = _bounded_text(group_id, "group_id", 120)
     if not client_run_id:
         client_run_id = f"mcp-{int(time.time() * 1000)}-{os.urandom(4).hex()}"
+    elif not re.fullmatch(r"[A-Za-z0-9:_-]{1,120}", str(client_run_id).strip()):
+        raise ValueError("client_run_id 仅支持 1-120 位字母、数字、冒号、下划线或连字符")
+    client_run_id = str(client_run_id).strip()
     result = await _post("/api/quant/backtests/run", {
         "client_run_id": client_run_id,
-        "name": str(name)[:120],
-        "start_date": _validate_date(start_date),
-        "end_date": _validate_date(end_date),
+        "name": normalized_name,
+        "start_date": start_date,
+        "end_date": end_date,
         "initial_capital": initial_capital,
         "funds": normalized,
         "strategy_type": strategy_type,
         "rebalance_frequency": rebalance_frequency,
-        "take_profit_rate": float(take_profit_rate),
-        "stop_loss_rate": float(stop_loss_rate),
-        "reentry_rate": float(reentry_rate),
+        "take_profit_rate": take_profit_rate,
+        "stop_loss_rate": stop_loss_rate,
+        "reentry_rate": reentry_rate,
         "benchmark_code": _validate_fund_code(benchmark_code) if benchmark_code else None,
-        "source_group_id": str(group_id).strip() or None,
+        "source_group_id": normalized_group_id or None,
         "source_group_name": None,
     })
     series = result.get("series") if isinstance(result, dict) else None
@@ -263,7 +320,7 @@ async def get_portfolio_backtest(
 ) -> dict:
     """分页读取已保存回测的走势和交易，供 Agent 审计长周期试算结果。"""
     _require_token()
-    result = await _get(f"/api/quant/backtests/{int(run_id)}")
+    result = await _get(f"/api/quant/backtests/{_positive_id(run_id, 'run_id')}")
     if not isinstance(result, dict):
         return result
     series = result.get("series")
@@ -301,19 +358,24 @@ async def save_quant_snapshot(
 ) -> dict:
     """幂等归档当天策略观察；每条观察需要 code、observation、triggers 和 riskVeto；不保存建议金额，不创建虚拟账户，也不会交易。"""
     _require_token()
-    if len(str(snapshot_key)) > 160 or len(str(strategy_id)) > 120 or len(str(strategy_version)) > 80:
-        raise ValueError("snapshot_key、strategy_id 或 strategy_version 超出长度限制")
-    signals = [
-        signal.model_dump(by_alias=True) if isinstance(signal, BaseModel) else signal
-        for signal in (fund_signals or [])
-    ]
+    normalized_snapshot_key = _bounded_text(snapshot_key, "snapshot_key", 160, required=True)
+    normalized_strategy_id = _bounded_text(strategy_id, "strategy_id", 120, required=True)
+    normalized_strategy_version = _bounded_text(strategy_version, "strategy_version", 80)
+    normalized_group_id = _bounded_text(group_id, "group_id", 120)
+    if len(fund_signals or []) > 100:
+        raise ValueError("fund_signals 单次最多 100 条")
+    signals = []
+    for signal in fund_signals or []:
+        normalized_signal = QuantSnapshotFundSignal.model_validate(signal).model_dump(by_alias=True)
+        normalized_signal["code"] = _validate_fund_code(normalized_signal.get("code"))
+        signals.append(normalized_signal)
     body = {
-        "snapshot_key": str(snapshot_key),
+        "snapshot_key": normalized_snapshot_key,
         "snapshot_date": _validate_date(snapshot_date),
-        "strategy_id": str(strategy_id),
-        "strategy_version": str(strategy_version) or None,
+        "strategy_id": normalized_strategy_id,
+        "strategy_version": normalized_strategy_version or None,
         "data_cutoff_at": _validate_data_cutoff(data_cutoff_at),
-        "group_id": str(group_id).strip() or None,
+        "group_id": normalized_group_id or None,
         "signals": signals,
         "market_mode": market_mode or {},
         "features": features or {},
@@ -337,14 +399,15 @@ async def get_quant_snapshots(
     """分页读取不可变信号档案；列表返回摘要，传 snapshot_id 读取完整内容。"""
     _require_token()
     if snapshot_id:
-        return await _get(f"/api/quant/snapshots/{int(snapshot_id)}")
+        return await _get(f"/api/quant/snapshots/{_positive_id(snapshot_id, 'snapshot_id')}")
+    start_date, end_date = _validated_range(start_date, end_date)
     params = {
-        "strategy_id": strategy_id or None,
+        "strategy_id": _bounded_text(strategy_id, "strategy_id", 120) or None,
         "portfolio_type": "actual",
         "cursor": cursor or None,
-        "start_date": _validate_date(start_date) or None,
-        "end_date": _validate_date(end_date) or None,
-        "group_id": str(group_id).strip() or None,
+        "start_date": start_date or None,
+        "end_date": end_date or None,
+        "group_id": _bounded_text(group_id, "group_id", 120) or None,
     }
     if latest_only:
         if cursor:
@@ -361,7 +424,7 @@ async def get_quant_snapshots(
         snapshot_id = items[0].get("id") if isinstance(items[0], dict) else None
         if not snapshot_id:
             raise ValueError("最新量化信号档案缺少 id")
-        return await _get(f"/api/quant/snapshots/{int(snapshot_id)}")
+        return await _get(f"/api/quant/snapshots/{_positive_id(snapshot_id, 'snapshot_id')}")
     params["limit"] = min(100, max(1, int(limit)))
     return await _get("/api/quant/snapshots", params={key: value for key, value in params.items() if value is not None})
 
@@ -376,6 +439,6 @@ async def get_quant_snapshot_review(
         "benchmark_code": _validate_fund_code(benchmark_code) if benchmark_code else None,
     }
     return await _get(
-        f"/api/quant/snapshots/{int(snapshot_id)}/review",
+        f"/api/quant/snapshots/{_positive_id(snapshot_id, 'snapshot_id')}/review",
         params={key: value for key, value in params.items() if value},
     )

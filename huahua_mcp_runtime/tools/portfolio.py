@@ -1,7 +1,7 @@
-"""portfolio MCP tool implementations."""
-
+"""Portfolio MCP tool implementations."""
 from .binding import RuntimeCallable, bind_runtime
 from . import portfolio_preferences
+from .fund_estimate_helpers import estimate_evidence_summary
 from .portfolio_preferences import (
     auto_invest_plans as _auto_invest_plans,
     fund_disciplines as _fund_disciplines,
@@ -11,7 +11,6 @@ from .portfolio_preferences import (
     get_portfolio_preferences,
     get_purchase_limit_watchlist,
 )
-
 __all__ = (
     "get_auto_invest_plans",
     "get_fund_disciplines",
@@ -21,7 +20,6 @@ __all__ = (
 )
 
 _RUNTIME_DEPENDENCIES = ("_calc_fund_stats", "_download_portfolio", "_download_portfolio_raw", "_fetch_estimates", "_get", "_is_valid_fund_code_value", "_normalize_data_source_mode", "_portfolio_payload_source", "_r2", "_ratio_pct", "_require_token", "_to_float", "_unwrap_sync_payload", "_validate_fund_code")
-
 if False:  # pragma: no cover - populated by bind() before tool registration
     _calc_fund_stats = None
     _download_portfolio = None
@@ -53,6 +51,7 @@ def _estimate_audit_payload(estimate: dict, requested_mode: str) -> dict:
     selection = selection if isinstance(selection, dict) else {}
     fallback = decision.get("fallback")
     fallback = fallback if isinstance(fallback, dict) else None
+    evidence = estimate_evidence_summary(estimate)
     return {
         "preference": decision.get("preference")
         or estimate.get("dataSourceMode")
@@ -61,7 +60,21 @@ def _estimate_audit_payload(estimate: dict, requested_mode: str) -> dict:
         "engine": decision.get("engine"),
         "status": decision.get("status"),
         "reason": decision.get("reason"),
-        "coverage": decision.get("coverage"),
+        "coverage": evidence.get("coverage"),
+        "proxyCoverage": evidence.get("proxyCoverage"),
+        "fxDegraded": evidence.get("fxDegraded") is True,
+        **(
+            {"fxStatus": evidence.get("fxStatus")}
+            if evidence.get("fxStatus") is not None
+            else {}
+        ),
+        **(
+            {"calibration": evidence.get("calibration")}
+            if isinstance(evidence.get("calibration"), dict)
+            else {}
+        ),
+        "partial": evidence.get("partial") is True,
+        "evidenceComplete": evidence.get("evidenceComplete") is True,
         "fallback": fallback,
         "usedProvider": selection.get("usedProvider"),
         "fellBackToHuahua": selection.get("fellBackToHuahua") is True,
@@ -87,6 +100,8 @@ async def get_sync_meta() -> dict:
         )
         meta["has_restorable_sync_payload"] = restorable_count > 0 or has_empty_tombstone
         meta["data_source"] = _portfolio_payload_source(meta)
+        meta["portfolio_updated_at"] = meta.get("updated_at", "")
+        meta["freshness_field"] = "portfolio_updated_at"
         meta["history_snapshot"] = {
             "latest_snapshot_created_at": meta.get("latest_snapshot_created_at"),
             "latest_snapshot_etag": meta.get("latest_snapshot_etag"),
@@ -120,6 +135,12 @@ async def get_raw_sync_data(include_json_text: bool = False) -> dict:
         "data": {k: v for k, v in parsed.items() if not k.startswith("_meta_")},
         "meta": {
             "updated_at": parsed.get("_meta_updated_at", ""),
+            "portfolio_updated_at": parsed.get("_meta_updated_at", ""),
+            "payload_timestamp": parsed.get("timestamp"),
+            "payload_timestamp_semantics": (
+                "客户端快照谱系/迁移元数据，不表示云端持仓新鲜度；"
+                "新鲜度只看 portfolio_updated_at"
+            ),
             "etag": parsed.get("_meta_etag", ""),
             "data_source": parsed.get("_meta_data_source", source),
             "size_bytes": parsed.get("_meta_size_bytes", 0),
@@ -164,6 +185,7 @@ async def get_transactions(code: str = "", include_pending: bool = True) -> dict
     return {
         "items": items,
         "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+        "portfolioUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
 
@@ -177,6 +199,7 @@ async def get_groups() -> dict:
         "groups": portfolio.get("groups", []),
         "watchlistGroups": portfolio.get("watchlistGroups", []),
         "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+        "portfolioUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
 
@@ -199,6 +222,7 @@ async def get_tags() -> dict:
             for fund in funds
         ],
         "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
+        "portfolioUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
 
@@ -207,7 +231,7 @@ async def get_records(include_transactions: bool = False) -> dict:
     获取用户持仓记录，并自动计算今日收益、持有收益、累计收益、市值、持有收益率等字段。
     需要 Agent Token 且账号需开通会员才能使用云端实时同步数据。
 
-    数据来自云端实时同步主数据（dataUpdatedAt 字段）。若刚在 App 中刷新了净值或新增了交易，
+    数据来自云端实时同步主数据（portfolioUpdatedAt；兼容字段 dataUpdatedAt）。若刚在 App 中刷新了净值或新增了交易，
     请先确认 App 实时同步已完成后再查询，以获取最新数据。
 
     返回结构：
@@ -220,13 +244,21 @@ async def get_records(include_transactions: bool = False) -> dict:
       - totalHoldingProfit: 持有收益总额（市值 - 成本，不含落袋/已实现收益）
       - totalHoldingReturnRate: 持有收益率（totalHoldingProfit / totalCost × 100%，仅反映浮动亏盈）
       - cumulativeProfit: 累计收益（持有收益 + 已实现收益，含落袋；不代表用户所有平台/历史交易的完整累计）
-    - dataUpdatedAt: 云端实时同步主数据的最后更新时间（UTC），展示给用户让其知晓数据新鲜度
+    - portfolioUpdatedAt/dataUpdatedAt: 云端实时同步主数据的最后更新时间（UTC）
+    - summary.valuationCompleteness: 官方市值完整度；freshenedCodes 表示使用行情接口中
+      比组合快照更新的官方净值锚点修正估值
+    - holdings[].valuationNavDate/valuationSource: 官方市值采用的净值日期和来源；
+      estimatedMarketValue 是独立盘中估算，不进入 marketValue
     - strategyPreferences.maxDrawdownLimitPct: 用户设置的组合回撤阈值百分数；0 表示未启用
     - summary.estimateCompleteness: 当前估值帧可用性。complete=false 表示至少一只持仓
       没有可用于当日收益的估值帧；timeoutCount>0 或 staleCount>0 时不得把 0 元
       当成真实零涨跌，过期 last-good 只供审计。
-    - holdings[].estimateAudit: 实际 provider/engine/coverage/fallback 等内部审计字段。
-      面向用户只表达官方发布或估算种类与覆盖率，不展示内部实现名称或低置信标签。
+    - holdings/watchlist 的 estimateDisplayDate 是估算展示日，targetNavDate 与
+      latestOfficialNavDate 是净值 D 日；returnAttributionDate 才是收益归属 G 日。
+      G 日不可靠时为 null，不能回退成 D 日。
+    - holdings/watchlist[].estimateAudit: provider/engine/proxyCoverage、fxDegraded、
+      partial、evidenceComplete 和 fallback 等审计字段；coverage 仅在后端审计传输
+      实际提供时存在。普通回答不主动展开这些技术状态，用户明确要求诊断时才使用。
 
     Args:
         include_transactions: 是否在每条记录中附带原始 transactions。默认 false 以节省上下文。
@@ -314,6 +346,17 @@ async def get_records(include_transactions: bool = False) -> dict:
         est = estimate_map.get(code, {})
         stats = _calc_fund_stats(fund, est)
         txs = fund.get("transactions") or []
+        requested_mode = mode_by_code.get(
+            normalized_code,
+            _normalize_data_source_mode(
+                user_preferences.get("fundDataSourceMode")
+            ),
+        )
+        estimate_audit = (
+            _estimate_audit_payload(est, requested_mode)
+            if est
+            else None
+        )
 
         # 响应仅保留汇总字段，不返回原始交易明细。
         enriched = {
@@ -336,11 +379,11 @@ async def get_records(include_transactions: bool = False) -> dict:
         # 估算时间（来自后端 gztime 字段）
         if est:
             enriched["estimateTime"] = est.get("gztime", "")
-            requested_mode = mode_by_code.get(
-                normalized_code,
-                _normalize_data_source_mode(user_preferences.get("fundDataSourceMode")),
-            )
-            enriched["estimateAudit"] = _estimate_audit_payload(est, requested_mode)
+            enriched["estimateAudit"] = estimate_audit
+            enriched["estimatePartial"] = estimate_audit["partial"]
+            enriched["estimateEvidenceComplete"] = estimate_audit[
+                "evidenceComplete"
+            ]
 
         # 在途资产（PENDING 买入交易）
         pending_buy_txs = [
@@ -363,6 +406,26 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "lastNav": stats.get("lastNav"),
                 "estimatedNav": stats.get("estimatedNav"),
                 "estimatedChangePercent": stats.get("estimatedChangePercent"),
+                "estimateSource": stats.get("estimateSource"),
+                "estimateAvailable": stats.get("estimateAvailable"),
+                "estimateFreshness": stats.get("estimateFreshness"),
+                "estimateStale": stats.get("estimateStale"),
+                "estimateDisplayDate": stats.get("estimateDisplayDate"),
+                "targetNavDate": stats.get("targetNavDate"),
+                "latestOfficialNavDate": stats.get("latestOfficialNavDate"),
+                "lastNavPublishDate": stats.get("lastNavPublishDate"),
+                "returnAttributionDate": stats.get("returnAttributionDate"),
+                "estimateAudit": estimate_audit,
+                "estimatePartial": (
+                    estimate_audit.get("partial") is True
+                    if estimate_audit
+                    else False
+                ),
+                "estimateEvidenceComplete": (
+                    estimate_audit.get("evidenceComplete") is True
+                    if estimate_audit
+                    else False
+                ),
                 **({"transactions": txs} if include_transactions else {}),
             }
             if auto_invest_plans:
@@ -389,9 +452,16 @@ async def get_records(include_transactions: bool = False) -> dict:
     estimate_available_count = 0
     estimate_timeout_count = 0
     estimate_stale_count = 0
+    estimate_partial_count = 0
     estimate_unavailable_codes = []
     estimate_timeout_codes = []
     estimate_stale_codes = []
+    estimate_partial_codes = []
+    valuation_available_count = 0
+    valuation_freshened_codes = []
+    valuation_missing_date_codes = []
+    partial_estimated_market_value = 0.0
+    estimated_market_value_available_count = 0
     for f in holdings:
         total_market_value = _r2(total_market_value + f.get("marketValue", 0))
         total_cost = _r2(total_cost + f.get("costTotal", 0))
@@ -414,9 +484,27 @@ async def get_records(include_transactions: bool = False) -> dict:
         if f.get("estimateStale"):
             estimate_stale_count += 1
             estimate_stale_codes.append(f.get("code"))
+        estimate_audit = f.get("estimateAudit")
+        if (
+            isinstance(estimate_audit, dict)
+            and estimate_audit.get("partial") is True
+        ):
+            estimate_partial_count += 1
+            estimate_partial_codes.append(f.get("code"))
         if f.get("estimateSource") == "timeout":
             estimate_timeout_count += 1
             estimate_timeout_codes.append(f.get("code"))
+        if f.get("valuationAvailable"):
+            valuation_available_count += 1
+            if not f.get("valuationNavDate"):
+                valuation_missing_date_codes.append(f.get("code"))
+        if f.get("valuationFreshenedFromMarketData"):
+            valuation_freshened_codes.append(f.get("code"))
+        if f.get("estimatedMarketValue") is not None:
+            estimated_market_value_available_count += 1
+            partial_estimated_market_value = _r2(
+                partial_estimated_market_value + f["estimatedMarketValue"]
+            )
     estimate_unavailable_count = len(holdings) - estimate_available_count
     total_holding_return_rate = _ratio_pct(total_holding_profit, total_cost)
     today_profit_rate = _ratio_pct(total_today_profit, total_day_base_market_value)
@@ -454,10 +542,41 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "unavailableCount": estimate_unavailable_count,
                 "timeoutCount": estimate_timeout_count,
                 "staleCount": estimate_stale_count,
+                "partialCount": estimate_partial_count,
                 "unavailableCodes": estimate_unavailable_codes,
                 "timeoutCodes": estimate_timeout_codes,
                 "staleCodes": estimate_stale_codes,
+                "partialCodes": estimate_partial_codes,
+                "evidenceComplete": (
+                    estimate_unavailable_count == 0
+                    and estimate_partial_count == 0
+                ),
                 "complete": estimate_unavailable_count == 0,
+            },
+            "valuationCompleteness": {
+                "totalCount": len(holdings),
+                "availableCount": valuation_available_count,
+                "unavailableCount": len(holdings) - valuation_available_count,
+                "freshenedCount": len(valuation_freshened_codes),
+                "freshenedCodes": valuation_freshened_codes,
+                "missingDateCount": len(valuation_missing_date_codes),
+                "missingDateCodes": valuation_missing_date_codes,
+                "complete": (
+                    valuation_available_count == len(holdings)
+                    and not valuation_missing_date_codes
+                ),
+            },
+            "partialEstimatedMarketValue": partial_estimated_market_value,
+            "totalEstimatedMarketValue": (
+                partial_estimated_market_value
+                if estimated_market_value_available_count == len(holdings)
+                else None
+            ),
+            "estimatedMarketValueCompleteness": {
+                "totalCount": len(holdings),
+                "availableCount": estimated_market_value_available_count,
+                "unavailableCount": len(holdings) - estimated_market_value_available_count,
+                "complete": estimated_market_value_available_count == len(holdings),
             },
         },
         "snapshotSummary": snapshot_summary,
@@ -465,22 +584,16 @@ async def get_records(include_transactions: bool = False) -> dict:
             "maxDrawdownLimitPct": max_drawdown_limit_pct,
         },
         "dataUpdatedAt": data_updated_at,
+        "portfolioUpdatedAt": data_updated_at,
         "dataSource": data_source,
     }
 
 
 async def get_summary() -> dict:
-    """
-    获取持仓总览摘要（总市值、今日收益、今日收益率、持有收益、持有收益率、累计收益）。
-    输出比 get_records 更精简（不含每只基金明细），适合快速查询资产概况。
-    今日收益率 todayProfitRate 使用 todayProfit / totalDayBaseMarketValue，
-    即归属日组合期初市值口径，不使用当前总市值。
-
-    返回的 dataUpdatedAt 字段表示云端实时同步主数据的更新时间，请将此时间告知用户，
-    让其了解数据是否为最新（若时间较旧，提示用户在 App 确认实时同步已完成）。
-    """
+    """获取精简持仓总览；收益率使用归属日组合期初市值口径。"""
     _require_token()
     result = await _runtime_get_records()
     summary = result.get("summary", {})
     summary["dataUpdatedAt"] = result.get("dataUpdatedAt", "")
+    summary["portfolioUpdatedAt"] = result.get("portfolioUpdatedAt", "")
     return summary

@@ -5,6 +5,7 @@ import re
 import time
 from typing import Any, Optional
 
+from .tools.fund_estimate_helpers import estimate_frame_available
 from .validation import DATA_SOURCE_PREFERENCE_EPOCH
 
 
@@ -14,6 +15,47 @@ _estimate_inflight_lock: Optional[asyncio.Lock] = None
 _estimate_inflight_loop: Optional[asyncio.AbstractEventLoop] = None
 _estimate_inflight: dict[tuple[str, ...], dict[str, Any]] = {}
 _MAX_ESTIMATE_INFLIGHT = 100
+
+
+def _estimate_item_is_cacheable(item: object) -> bool:
+    """Keep only usable current frames in the MCP's short process cache."""
+
+    if not isinstance(item, dict) or not item:
+        return False
+    source = str(item.get("source") or "").strip().lower()
+    status = str(item.get("status") or "").strip().lower()
+    if (
+        not source
+        or source in {"reset", "timeout", "unavailable", "cache_only_miss"}
+        or status == "unavailable"
+    ):
+        return False
+    decision = item.get("estimateDecision")
+    if isinstance(decision, dict):
+        decision_status = str(decision.get("status") or "").strip().lower()
+        decision_route = str(decision.get("routeId") or "").strip().lower()
+        decision_reason = str(decision.get("reason") or "").strip().lower()
+        if (
+            decision_status == "unavailable"
+            or decision_route == "cache_only_miss"
+            or decision_reason == "cache_only_miss"
+        ):
+            return False
+    freshness = str(
+        item.get("freshness")
+        or item.get("estimateFreshness")
+        or ""
+    ).strip().lower()
+    if (
+        item.get("stale") is True
+        or item.get("estimateStale") is True
+        or item.get("frameRefreshing") is True
+        or freshness in {"stale", "unavailable"}
+        or str(item.get("fallbackReason") or "").strip().lower()
+        == "frame_refreshing"
+    ):
+        return False
+    return estimate_frame_available(item)
 
 
 def _get_estimate_semaphore() -> asyncio.Semaphore:
@@ -102,7 +144,7 @@ async def fetch_estimates(
                     continue
                 fetched[code_key] = item
                 if (
-                    item.get("source") != "timeout"
+                    _estimate_item_is_cacheable(item)
                     and int(session.get("generation") or 0) == session_generation
                 ):
                     mode = normalize_mode(
@@ -173,7 +215,10 @@ async def fetch_estimates(
         entry["waiters"] += 1
 
     try:
-        result.update(await asyncio.shield(task))
+        fetched = await asyncio.shield(task)
+        if int(session.get("generation") or 0) != session_generation:
+            raise RuntimeError("Agent Token 已在请求期间变更，请重试")
+        result.update(fetched)
     finally:
         async with _get_estimate_inflight_lock():
             entry = _estimate_inflight.get(inflight_key)
@@ -209,11 +254,12 @@ async def download_portfolio(runtime: dict[str, Any]) -> dict:
         ):
             return cache["data"]
         raw, source = await runtime["_download_portfolio_raw"]()
+        if int(session.get("generation") or 0) != requested_generation:
+            raise RuntimeError("Agent Token 已在请求期间变更，请重试")
         parsed = runtime["_unwrap_sync_payload"](raw if isinstance(raw, dict) else {}, source=source)
-        if int(session.get("generation") or 0) == requested_generation:
-            cache["data"] = parsed
-            cache["ts"] = time.monotonic()
-            cache["generation"] = requested_generation
+        cache["data"] = parsed
+        cache["ts"] = time.monotonic()
+        cache["generation"] = requested_generation
         return parsed
 
 

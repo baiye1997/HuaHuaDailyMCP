@@ -71,14 +71,14 @@ get_summary()
 - `todayProfitRate`：今日/昨日收益率，口径为 `todayProfit / totalDayBaseMarketValue × 100%`，不要用当前总市值重算。
 - `totalDayBaseMarketValue`：`todayProfitRate` 使用的归属日组合期初市值。
 - `displayedDayCompleteness`：组合当日收益完整度。若 `complete=false` 或 `pendingAttributionCount>0`，说明至少一只 QDII/T+N 最新官方净值尚无可靠 G 日；现有 `todayProfit` / `todayProfitRate` 仅覆盖可归属基金，不得表述为完整组合当日收益。
-- `estimateCompleteness`：当前估值帧可用性。若 `complete=false`、`timeoutCount>0` 或 `staleCount>0`，至少一只持仓缺少可用估值帧，0 元不能表述为真实零涨跌；用 `unavailableCodes` / `timeoutCodes` / `staleCodes` 定位基金。过期 last-good 只供内部审计，不参与今日收益。
+- `estimateCompleteness`：当前估值帧可用性。若 `complete=false`、`timeoutCount>0` 或 `staleCount>0`，至少一只持仓缺少可用估值帧；`evidenceComplete`、`partialCodes` 和汇率/代理证据用于避免 Agent 虚构完整覆盖。普通回答不要主动逐只传播这些技术状态，只有用户明确询问诊断、证据或估算口径时才展开。0 元不能表述为真实零涨跌；过期 last-good 只供内部审计，不参与今日收益。
 - `totalHoldingProfit`：持有收益。
 - `totalHoldingReturnRate`：持有收益率。
 - `cumulativeProfit`：累计收益；这是本 App 已记录交易推导的累计，仅在用户明确询问历史累计或该字段时使用。
-- `dataUpdatedAt`：云端实时同步主数据时间。
+- `portfolioUpdatedAt`（兼容字段 `dataUpdatedAt`）：云端实时同步主数据时间。
 - `strategyPreferences.maxDrawdownLimitPct`：用户在策略实验室设置的组合回撤阈值百分数；`0` 表示未启用。不得自行假定为 10%。
 
-回答时必须说明 `dataUpdatedAt`。如果时间明显旧，提醒用户在 App 开启实时同步或点击「从云端同步恢复 / 手动同步」相关入口。
+回答时必须说明 `portfolioUpdatedAt`（旧客户端可读 `dataUpdatedAt`）。原始数据中的 `data.timestamp`/`meta.payload_timestamp` 只是客户端快照谱系或迁移元数据，不表示同步新鲜度。如果同步时间明显旧，提醒用户在 App 开启实时同步或点击「从云端同步恢复 / 手动同步」相关入口。
 
 不要为了资产概况先调用 `get_raw_sync_data()`。
 
@@ -93,17 +93,17 @@ get_records({"include_transactions": false})
 返回重点：
 - `holdings`：有持仓的基金；已配置定投时含 `autoInvestPlans`。
 - `watchlist`：App 中可见的自选或清仓观察项；不包含已送养隐藏项，同代码的显式自选优先；
-  与 App 刷新口径一致，含盘中估算（`estimatedNav`/`estimatedChangePercent`，观察列不按估算计价）；
+  与 App 刷新口径一致，含估算值及 source/freshness/estimateAudit（观察列不按估算计价）；
   已配置定投时含 `autoInvestPlans`。
 - `groups`：分组。
 - `summary`：汇总。
-- `dataUpdatedAt`：云端实时同步主数据时间。
+- `portfolioUpdatedAt`（兼容字段 `dataUpdatedAt`）：云端实时同步主数据时间。
 
-云端实时同步主数据会保存最后一次官方净值作为恢复基线，但不会保存盘中估值等高频行情。`get_records` 会主动拉取最新行情用于今日收益，但持仓市值仍以主数据中的官方 `lastNav` 为准；若需要盘中估算口径，再调用 `get_item_estimate` 获取 `estimatedNav`。
+云端实时同步主数据会保存最后一次官方净值作为恢复基线，但不会保存盘中估值等高频行情。`get_records` 会主动拉取最新行情，并比较行情帧的官方 `dwjz/last_nav_date` 与主数据 `lastNav/lastNavDate`：`marketValue` 使用较新的官方锚点，`valuationNavDate`/`valuationSource` 说明依据；盘中 `estimatedNav` 仅用于 `estimatedMarketValue` 和当日收益，绝不冒充官方市值。
 
-当前 App 口径：持仓市值和持有收益只按云端主数据中的官方 `lastNav` 计价；盘中估算只用于 `dayProfit`（今日收益），不会回填持仓市值。`cumulativeProfit` 是本 App 已记录交易推导的累计收益，不代表用户所有平台/历史清仓买卖的完整累计收益。`get_records` 会读取云端主数据里的 `userPreferences.fundDataSourceMode` 和基金级 `dataSourceMode`，自动按用户选择的行情源请求估值。
+当前口径：持仓市值和持有收益只按官方净值计价；MCP 可用行情接口返回的更新官方锚点修正滞后的云端恢复基线，但盘中估算不会回填官方市值。`cumulativeProfit` 是本 App 已记录交易推导的累计收益，不代表用户所有平台/历史清仓买卖的完整累计收益。`get_records` 会读取云端主数据里的 `userPreferences.fundDataSourceMode` 和基金级 `dataSourceMode`，自动按用户选择的行情源请求估值。
 
-`huahua` 是稳定的花花托管策略身份，不等于某一个固定内部实现。需要排查实际链路时读取 `holdings[].estimateAudit` 的 `provider`、`engine`、`coverage`、`fallback`；这些字段仅供内部审计。面向用户只说明“官方发布”或具体估算种类及覆盖率，不展示“自研”“低置信”等内部标签。
+`huahua` 是稳定的花花托管策略身份，不等于某一个固定内部实现。用户明确要求排查链路时才读取并展开 holdings/watchlist 的 `estimateAudit`：`provider`、`engine`、`proxyCoverage`、`fxDegraded`、`partial`、`evidenceComplete`、`fallback`，以及审计传输实际提供时才存在的 `coverage`。普通回答只给估值时间、类型、来源、涨幅、估算净值和官方净值日期；不能把代理描述成持仓股票完整覆盖。`targetNavDate`/`latestOfficialNavDate` 是净值 D 日，`estimateDisplayDate` 是估算展示/T 帧日期，`returnAttributionDate` 才是可靠收益 G 日；后者为 null 时不得用 D 日代替。
 
 用户询问定投计划、止盈止损纪律、夜盘自选或限购观察等组合偏好时，优先使用聚合只读工具一次取回（共享同一快照缓存，不产生额外网络请求）：
 
@@ -300,9 +300,10 @@ get_item_estimate({"codes": ["110022"]})
 注意：
 - `codes` 最多 50 个。
 - 可批量传入，避免逐个调用。
-- 结果同一 session 内缓存 60 秒。
+- 可用当前新鲜帧在同一 session 内缓存 60 秒；reset/unavailable/cache-only miss 或 stale 不缓存，后续调用可及时读到物化恢复帧。
 - 可传 `default_data_source_mode`（`source_a`/`source_b`/`huahua`）和 `data_source_mode_by_code`，对齐 App 的多行情源设置；默认是 `source_a`，只有 Pro 可切换，未知值会直接报错。
 - 必须检查顶层 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes` 和 `timeoutCodes`；部分返回或 timeout 占位帧不能当成整批成功。
+- `complete` 只表示每个代码都有可用数值；还要内部检查 `evidenceComplete`、`partialCodes`、`fxDegradedCodes` 和每项 `estimateEvidence.proxyCoverage/fxStatus`，避免作出错误完整性断言。`fxStatus=omitted` 表示本地资产涨幅仍可用。普通回答不主动枚举这些技术状态；只有用户明确要求诊断时，才用 `estimateEvidence.calibration{applied,reason,weight,modelVersion}` 等证据解释口径，并明确市场因子、QDII 市场代理或板块代理不等于持仓股票完整覆盖。
 - 数据来源 A/B 对部分基金没有覆盖时，只表示对应基金或来源不可用；必须按代码检查上述集合，不能把单来源缺失描述成整批基金请求失败。
 
 ### 4.2 用户只提供基金名称
@@ -354,7 +355,7 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
 - 今日盘中估值曲线：`get_fund_timeline`；若用户指定行情源，传 `source_mode`。
 - 基础详情与持仓信息：`get_item_detail`。该工具不触发量化计算；收益、均线偏离、
   回撤、波动和历史统计必须按需调用 `get_fund_quant_metrics`。
-- QDII 夜盘实时估值：`get_night_estimate`（需会员，美股交易时段有效）；用户在 App 添加的夜盘自选基金列表用 `get_night_watchlist`，通常先调这个再传给 `get_night_estimate`。
+- QDII 夜盘物化估值：`get_night_estimate`（需会员，最多 30 只）；用户在 App 添加的夜盘自选基金列表用 `get_night_watchlist`，通常先调这个再传给 `get_night_estimate`。forecast 看 `currentComplete/warming/frameRefreshing`，last_close 看 `complete`，不能把固定收盘快照的 stale 当作刷新失败。`item.fxStatus=omitted` 仍可 ready，但证据不完整；持仓模型的 `item.calibration` 是只读校准审计，夜盘不会训练。
 - 基金画像（综合信息）：`get_fund_profile`。包含费率、排名、持仓、行业、分红、风险指标等。
 - 批量画像：`get_batch_fund_profiles`（最多 20 只）。读取 `data`，并检查
   `complete`、`missingCodes`、`timedOut`；缺失表示服务端在 20 秒预算内未取得，
@@ -488,7 +489,7 @@ get_fund_flow()
 get_instrument_catalog()
 ```
 
-实时行情：
+最近物化行情快照：
 
 ```json
 get_instrument_quotes({"codes": ["000300", "000001"]})
@@ -496,6 +497,9 @@ get_instrument_quotes({"codes": ["000300", "000001"]})
 
 这里必须使用 `get_instrument_catalog` 返回的标准代码；程序化查询严格按请求
 集合返回，不会自动补默认标的或截断成 App 卡片数量。
+`updatedAt/quoteDate` 是源行情时点，`polledAt` 是缓存采集时点。必须检查
+`cacheMeta.freshness/missingCodes/staleCodes/repairingCodes`；repairing 表示后台补帧，
+本次请求不会为了“强刷”而直连 Yahoo。
 
 分时走势：
 
@@ -527,7 +531,7 @@ get_benchmark_history({"code": "sh000300"})
 
 ### 4.9 用户问 QDII 基金夜盘
 
-QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段。夜盘估值在美股交易时段（21:30–次日04:00 夏令时）提供实时持仓穿透。
+QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段。夜盘工具读取共享物化帧，行情允许处于当前轮刷新或等待 poller 的状态，不是股票软件逐笔报价。
 
 **推荐流程（无需用户报代码）**：先用 `get_night_watchlist()` 读用户在 App 添加的夜盘自选列表，再用其结果调 `get_night_estimate()`：
 
@@ -542,17 +546,20 @@ get_night_watchlist()
 get_night_estimate({"codes": ["016665", "018147"]})
 ```
 
-`force: true` 可跳过服务端缓存强制刷新，默认 false。`view: "last_close"` 可查询上一收盘快照口径，默认 `forecast`。
+`force` 是废弃兼容参数；true/false 都不会跳过服务端共享缓存或触发 Yahoo 抓取。`view: "last_close"` 查询上一收盘快照口径，默认 `forecast`。一次最多 30 只。
 
 返回每只基金的：
 - `estimatedChangePercent`：盘后复合涨跌幅（股价×汇率）。
 - `estimatedNav`：估算净值。
 - `breakdown`：穿透到个股的持仓明细、股价涨跌、汇率变动、贡献度。
 - `status`：`ready`（数据就绪）/ `pending`（等待开盘）/ `closed`（休市）。
+- `currentComplete`：forecast 是否全部为当前新鲜帧；必须同时看 `warming`、`frameRefreshing`、`pollerPendingCodes`、`staleCodes`。
+- `complete`：所选 view 的返回完整度。last_close 即使 freshness=stale 也可能是完整固定历史快照，此时 `currentComplete=false` 是正常结果。
 
 注意：
 - 需要 VIP 或 PRO 会员。
 - 非美股交易时段返回休市状态，不是错误。
+- `actual_session_date` 是海外行情交易日，顶层 `date` 是北京时间响应日；item 的 `navRequiredDate/lastNavDate` 是基金净值 D 日。它们都不能直接当作基金收益归属 G 日。
 - 不要在 A 股交易时段频繁调用。
 - 夜盘自选列表需要 App 至少做过一次实时同步才能被 MCP 读到；旧版本 App（未升级到含夜盘同步的版本）的云端主数据里没有 nightWatchCodes 字段，此时 `has_customized` 会是 `false`。
 

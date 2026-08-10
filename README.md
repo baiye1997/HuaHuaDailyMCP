@@ -137,6 +137,19 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 
 `get_tool_manifest()` 返回当前 profile 与可用能力清单，Agent 可据此自检。
 
+### 版本 3.5.0 变更
+
+- 日盘与夜盘估值统一返回校准状态、目标净值 D 日和证据完整度；可靠收益归属 G 日仅由 `get_records().returnAttributionDate` 提供且可能为空。汇率缺失时保留本币估值，不再误报整只基金不可用。
+- 夜盘批量上限、`force` 兼容语义、刷新中状态与历史收盘视图已和后端契约对齐。
+- QDII 市场代理、市场因子代理及组合审计会保留来源、覆盖谱系和部分证据状态；市场行情明确区分源行情时间与后台采集时间。
+
+### 版本 3.4.0 变更
+
+- 修复组合估值滞后：`marketValue` 会在云端组合快照与行情帧的官方净值锚点中选取更新者，盘中 `estimatedNav` 仍与官方市值严格分离。
+- 新增 `portfolioUpdatedAt`、估值完整度与每只持仓的估值来源/净值日期；明确原始负载 `timestamp` 不是同步新鲜度。
+- 对齐 App 的现金分红、红利再投和 QDII D→G 当日收益口径。
+- 修复社区关注列表和用户搜索的响应解包；加固 Token 切换并发隔离、上传资源限制和量化/路径输入校验。
+
 ### 版本 3.3.2 变更
 
 - 安全修复：截图工具的 `image_paths` 本地路径读取已禁用（防止读取并上传任意本地文件），一律改用 `images_base64` 传图片内容；传入 `image_paths` 会直接报错。
@@ -294,8 +307,8 @@ clawhub install huahua-daily
 - 数据来自云端实时同步主数据，MCP 固定读取结构化组合接口，不读取旧同步大包或云端历史备份快照。若用户刚在 App 操作，提醒其确认实时同步已完成再查询。
 - `get_records` 的市值/持有收益只按 App 云端主数据中的官方 `lastNav` 计算；盘中估算只用于今日收益，不用于持仓市值。
 - QDII/T+N 最新官方净值缺少可靠 G 日时，`todayProfit` 和归属日分母不会提前计入；检查 `summary.displayedDayCompleteness.complete` 与 `pendingAttributionCount`，不得把残缺组合描述成完整当日收益。
-- `summary.estimateCompleteness.complete=false`、`timeoutCount>0` 或 `staleCount>0` 表示至少一只持仓缺少可用估值帧；此时 0 元不是已确认的真实零涨跌。用 `unavailableCodes` / `timeoutCodes` / `staleCodes` 定位基金；过期 last-good 仅供审计，不参与今日收益。
-- `huahua` 是稳定的花花托管策略身份，不承诺固定内部实现。`get_records` 的 `holdings[].estimateAudit` 保留实际 provider、engine、coverage、fallback 等审计字段；面向用户只展示官方发布或估算种类及覆盖率，不展示“自研”“低置信”等内部标签。
+- `summary.estimateCompleteness.complete=false`、`timeoutCount>0` 或 `staleCount>0` 表示至少一只持仓缺少可用估值帧；`complete=true` 也只代表有可用数值。`evidenceComplete`、`partialCodes`、汇率与代理证据用于防止 Agent 虚构“完整覆盖”，但普通回答不要主动逐只传播这些技术状态；只有用户明确询问诊断、证据或估算口径时才展开。0 元不能表述为真实零涨跌；过期 last-good 仅供审计，不参与今日收益。
+- `huahua` 是稳定的花花托管策略身份，不承诺固定内部实现。`get_records` 的 holdings/watchlist `estimateAudit` 保留实际 provider、engine、proxyCoverage、fxDegraded、partial、evidenceComplete、fallback 等审计字段；`coverage` 仅在后端审计传输实际提供时存在，普通公开估值接口会隐藏内部覆盖率。日常回答只说明稳定的估值类型、来源、时间、涨幅与净值；只有用户明确要求审计时才解释代理范围，且不能把代理估算描述成持仓股票完整覆盖。
 - 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
@@ -315,9 +328,9 @@ clawhub install huahua-daily
 
 云端实时同步与持仓：
 
-- `get_sync_meta()`：读取云端实时同步主数据更新时间、etag、大小，并返回最新云端历史快照摘要。
-- `get_raw_sync_data(include_json_text=false)`：读取解析后的完整云端实时同步主数据，优先结构化组合接口。默认复用会话内 30 秒组合缓存；`include_json_text=true` 用于导出/迁移审计，会绕过缓存重新下载原始数据。
-- `get_records(include_transactions=false)`：读取持仓、App 中可见的自选、今日估算收益和汇总；不返回已送养隐藏项，同代码的显式自选优先；会自动使用云端主数据里的全局/单基金行情源偏好，并在已配置时返回 `autoInvestPlans`。
+- `get_sync_meta()`：读取云端实时同步主数据更新时间、etag、大小，并返回最新云端历史快照摘要。新鲜度以 `portfolio_updated_at` 为准。
+- `get_raw_sync_data(include_json_text=false)`：读取解析后的完整云端实时同步主数据，优先结构化组合接口。默认复用会话内 30 秒组合缓存；`include_json_text=true` 用于导出/迁移审计，会绕过缓存重新下载原始数据。`data.timestamp`/`meta.payload_timestamp` 只是客户端快照谱系或迁移元数据，不是同步时间。
+- `get_records(include_transactions=false)`：读取持仓、App 中可见的自选、估算收益和汇总；不返回已送养隐藏项，同代码的显式自选优先；会自动使用云端主数据里的全局/单基金行情源偏好，并在已配置时返回 `autoInvestPlans`。官方市值会选取组合快照与行情帧中更新的官方净值锚点，并通过 `valuationNavDate`/`valuationSource` 公示；盘中估值只进入 `estimatedMarketValue`。holdings/watchlist 都返回 source、freshness、estimateAudit，以及 `targetNavDate`/`latestOfficialNavDate`（D 日）、`estimateDisplayDate` 和可靠时才存在的 `returnAttributionDate`（G 日）。
 - `get_summary()`：读取资产摘要。
 - `get_transactions(code="", include_pending=true)`：读取交易流水。
 - `get_transaction_ledger(start_date="", end_date="", codes?, transaction_types?, statuses?, group_id="", cursor="", limit=100, order="desc")`：读取服务端完整交易账本，含金额、份额、费用、净值日和确认日；可按持仓分组筛选；筛选与排序按 `effectiveDate = confirmDate || tradeDate`；永久删除基金不再出现。
@@ -345,7 +358,7 @@ clawhub install huahua-daily
 市场与基金：
 
 - `search_item(query)`
-- `get_item_estimate(codes, default_data_source_mode="source_a", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `source_a/source_b/huahua`，默认 A，只有 Pro 可切换。检查 `complete`、`missingCodes`、`invalidCodes`、`unavailableCodes`、`timeoutCodes`、`staleCodes` 和 `decisionUnavailableCodes`，不能把部分返回、timeout、过期或决策不可用帧当成完整行情。来源 A/B 缺少某只基金时只是该代码或来源覆盖不足，不等同于整批请求失败；所有可信路径均未命中时必须明确不可用，不能借用其他基金或板块均值造数。
+- `get_item_estimate(codes, default_data_source_mode="source_a", data_source_mode_by_code?)`：最多 50 只；行情源只支持 `source_a/source_b/huahua`，默认 A，只有 Pro 可切换。检查 `complete`、`evidenceComplete`、`missingCodes`、`invalidCodes`、`unavailableCodes`、`timeoutCodes`、`staleCodes`、`decisionUnavailableCodes`、`partialCodes` 和 `fxDegradedCodes`，用于避免把不完整帧误说成完整结果。每项可含 `estimateEvidence.proxyCoverage/fxStatus/fxDegraded/coverage`，其中 coverage 仅在审计传输实际提供时存在；QDII 持仓帧还会统一返回 `estimateEvidence.calibration{applied,reason,weight,modelVersion}`。`fxStatus=omitted` 时本地资产涨幅仍可用。只有可用当前新鲜帧会进入 MCP 60 秒会话缓存；无数值、reset/unavailable/cache-only miss 或 stale 不缓存。普通回答不主动枚举 partial、FX 或覆盖率；用户明确要求诊断时才展开，并且不能把市场/板块代理冒充持仓股票完整覆盖。`display_date` 是估算展示/T 帧日期，`target_nav_date` 与 `last_nav_date` 是净值 D 日；可靠收益 G 日只能读取 `get_records().returnAttributionDate`，为 null 时不得用 D 日代替。
 - `get_fund_source_previews(code)`：单只基金 `source_a/source_b/huahua` 来源预览，用于解释或选择数据源。净值公布后，各来源可能返回收盘前归档估值、当前接口已切换的官方值或权威官方净值；同时检查 `source` 和 `last_estimate_snap.source`。`data` 允许缺少未覆盖或无归档的 A/B，这不代表整个请求失败。
 - `get_daily_rank()`：返回已形成当日估值或官方净值快照的活跃基金池排行，不代表全市场全量基金。
 - `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
@@ -356,7 +369,7 @@ clawhub install huahua-daily
 - `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只；检查 `complete` 和 `missingCodes`。
 - `get_fund_period_rank(code)`
 - `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只；结果位于 `data`，检查 `complete` 和 `missingCodes`。
-- `get_night_estimate(codes, force=false, view="forecast")`：QDII 基金夜间实时估值，含持仓穿透、汇率变动（需会员）。`force=true` 跳过服务端缓存；`view` 可为 `forecast` 或 `last_close`。
+- `get_night_estimate(codes, force=false, view="forecast")`：最多 30 只，读取 QDII 夜盘最近已物化帧（需会员）。`force` 是废弃兼容参数，true/false 都不会穿透共享缓存或触发上游抓取。forecast 必须检查 `currentComplete`、`warming`、`frameRefreshing`、`pollerPendingCodes` 和 `staleCodes`；`item.fxStatus=omitted` 时本地涨幅仍可 ready/current，但 `evidenceComplete=false`；持仓模型帧的 `item.calibration` 统一给出 `applied/reason/weight/modelVersion`，夜盘只读模型、不训练。last_close 的 stale 是历史收盘快照的正常语义，检查 `complete`，其 `currentComplete=false`。`actual_session_date` 是海外行情交易日，`date` 是北京时间响应日，item 的 `navRequiredDate/lastNavDate` 才是净值 D 日，均不是收益 G 日。
 - `get_night_watchlist()`：读取用户在 App 夜盘估值页手动添加的基金代码列表（来自云端实时同步主数据），通常作为 `get_night_estimate` 的前置工具，免去用户手动报代码。
 - `get_purchase_limit_watchlist()`：读取用户在 App 限购观察页保存的基金列表；可配合 `get_fund_fees` 检查申购状态和限购额度。
 - `get_status()`
@@ -375,7 +388,7 @@ clawhub install huahua-daily
 - `get_batch_fund_quant_metrics(codes, view, current_frames=None)`：按相同语义视图批量取数；`technical/momentum/risk` 最多 50 只，`full` 最多 10 只。Agent 不应并发调用多次单只接口，也不应重复拉 NAV 历史计算。顶层 `complete` 只表示所有代码至少有一条官方净值；指标窗口检查 `item.metrics.complete`（`full` 为 `item.official.metrics.complete`），历史统计检查 `item.current.status`。`computing` 按 `retryAfterMs` 稍后重试；使用当前帧时还必须检查 freshness/stale。
 - `get_holder_ranking()`：App 内持有人数排行榜。
 - `get_instrument_catalog()`：指数/ETF 目录。
-- `get_instrument_quotes(codes)`：严格按目录标准代码返回指数/ETF实时行情，不补默认标的；最多20个。
+- `get_instrument_quotes(codes)`：严格按目录标准代码返回指数/ETF最近物化行情快照，不补默认标的；最多20个。`updatedAt/quoteDate` 是源行情时点，`polledAt` 是缓存采集时点；必须检查 `cacheMeta.freshness/missingCodes/staleCodes/repairingCodes`，repairing 表示后台正在补帧而非本次请求直抓 Yahoo。
 - `get_instrument_timeline(code, range="1d")`：使用目录标准代码读取指数/ETF分时走势，例如 `000300`、`399006`、`KS11`。
 - `get_instrument_history(code, period="1m")`：使用目录标准代码读取指数/ETF历史数据；周期仅支持 `1m/3m/6m/1y`。
 

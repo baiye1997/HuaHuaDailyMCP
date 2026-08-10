@@ -75,6 +75,16 @@ def headers() -> dict:
     return {"Authorization": f"AgentToken {token}"} if token else {}
 
 
+def request_context() -> tuple[dict, int]:
+    """Capture auth headers and the session generation as one request context."""
+    return headers(), int(session.get("generation") or 0)
+
+
+def assert_session_generation(generation: int) -> None:
+    if int(session.get("generation") or 0) != generation:
+        raise RuntimeError("Agent Token 已在请求期间变更，请重试")
+
+
 def url(path: str) -> str:
     return f"{session['base_url']}{path}"
 
@@ -151,8 +161,10 @@ def _decode_json(response: httpx.Response) -> dict | list:
 
 
 async def get(path: str, params: dict = None) -> dict:
+    request_headers, generation = request_context()
     try:
-        response = await get_client().get(url(path), params=params, headers=headers())
+        response = await get_client().get(url(path), params=params, headers=request_headers)
+        assert_session_generation(generation)
         _raise_auth_error(response)
         response.raise_for_status()
     except ValueError:
@@ -163,8 +175,10 @@ async def get(path: str, params: dict = None) -> dict:
 
 
 async def get_optional(path: str, params: dict = None) -> Optional[dict]:
+    request_headers, generation = request_context()
     try:
-        response = await get_client().get(url(path), params=params, headers=headers())
+        response = await get_client().get(url(path), params=params, headers=request_headers)
+        assert_session_generation(generation)
         _raise_auth_error(response)
         if response.status_code == 404:
             return None
@@ -177,8 +191,10 @@ async def get_optional(path: str, params: dict = None) -> Optional[dict]:
 
 
 async def post(path: str, body: dict = None, params: dict = None) -> dict:
+    request_headers, generation = request_context()
     try:
-        response = await get_client().post(url(path), params=params, json=body or {}, headers=headers())
+        response = await get_client().post(url(path), params=params, json=body or {}, headers=request_headers)
+        assert_session_generation(generation)
         _raise_auth_error(response)
         response.raise_for_status()
     except ValueError:
@@ -193,15 +209,17 @@ async def post_files(
     files: list[tuple[str, bytes, str]],
     form_data: Optional[dict] = None,
 ) -> dict | list:
+    request_headers, generation = request_context()
     try:
         multipart = [("files", (filename, content, mime)) for filename, content, mime in files]
         response = await get_client().post(
             url(path),
             files=multipart,
             data=form_data or None,
-            headers=headers(),
+            headers=request_headers,
             timeout=httpx.Timeout(120, connect=30),
         )
+        assert_session_generation(generation)
         _raise_auth_error(response)
         response.raise_for_status()
     except ValueError:
@@ -212,8 +230,10 @@ async def post_files(
 
 
 async def put(path: str, body: dict = None) -> dict:
+    request_headers, generation = request_context()
     try:
-        response = await get_client().put(url(path), json=body or {}, headers=headers())
+        response = await get_client().put(url(path), json=body or {}, headers=request_headers)
+        assert_session_generation(generation)
         _raise_auth_error(response)
         response.raise_for_status()
     except ValueError:
@@ -224,8 +244,10 @@ async def put(path: str, body: dict = None) -> dict:
 
 
 async def delete(path: str) -> dict:
+    request_headers, generation = request_context()
     try:
-        response = await get_client().delete(url(path), headers=headers())
+        response = await get_client().delete(url(path), headers=request_headers)
+        assert_session_generation(generation)
         _raise_auth_error(response)
         response.raise_for_status()
     except ValueError:
