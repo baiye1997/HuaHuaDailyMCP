@@ -137,6 +137,12 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 3.5.5 变更
+
+- 基金量化指标、策略上下文与组合回放新增官方净值 freshness 契约；过期、缺失或无法验证的数据不再被标记为可分析，并会受控触发后台刷新。
+- 基金历史、基准历史和指数/ETF 日线在 MCP 中启用严格新鲜度模式；只能取得旧兜底时直接报错，不再向 Agent 返回过期量化输入。
+- 回测新增尾部历史完整性审计，补数未完成时不会再报告完整覆盖。
+
 ### 版本 3.5.4 变更
 
 - 对齐 MCP 全量工具、权限 scope、QDII D→G 日期归属、夜盘默认池与 pending 分类契约；与 App 一致地拒绝空名称的限购观察项。
@@ -360,11 +366,11 @@ clawhub install huahua-daily
 
 策略实验室：
 
-- `get_portfolio_nav_history(start_date="", end_date="", benchmark_code="000300", group_id="")`：真实组合单位净值、累计收益、每日收益和回撤；与 App“策略 → 我的组合”同口径。
+- `get_portfolio_nav_history(start_date="", end_date="", benchmark_code="000300", group_id="")`：真实组合单位净值、累计收益、每日收益和回撤；当前区间必须检查 `complete` 与 `navFreshness.complete/staleCodes/missingCodes/unverifiedCodes`，共同停在旧日期的组合不会再报告完整。
 - `get_portfolio_trade_review(start_date, end_date, benchmark_code="000300", group_id="")`：读取与 App 相同的加减仓复盘，以及 T1/T7/T20/T60 后续表现。
-- `get_batch_fund_nav_history(codes, start_date="", end_date="", order="asc")`：一次读取最多 20 只基金的官方历史净值，DB-only，不逐只请求上游；每只基金返回 `coverageStart/coverageEnd/baselineDate/complete`，`complete` 仅在请求区间首尾严格覆盖时为 true。
-- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。MCP 默认 `view="compact"`，保留分析就绪状态、风控、执行、全市场聚合与主基准逐指数明细；需要完整份额、成本、官方净值、全部启用指数明细和下钻引用时使用 `view="full"`。两种视图复用同一 canonical Context 缓存。默认轮询池只读缓存，非默认指数按需由后端读穿；历史模式使用可按 `as_of_date` 截止的日线来源。不返回原始日序列，也不要求 Agent 自行计算。
-- `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。分析某个资产分组时传 `group_id`，服务端会校验并保存方案起点。`strategy_type` 支持固定比例 `target_rebalance` 和止盈止损再买入 `threshold_reentry`；固定比例的调仓频率支持 `none/daily/weekly/monthly/quarterly`。
+- `get_batch_fund_nav_history(codes, start_date="", end_date="", order="asc")`：一次读取最多 20 只基金的官方历史净值，DB-only，不逐只请求上游；每只基金返回 `coverageStart/coverageEnd/baselineDate/complete`，`complete` 仅在请求区间首尾严格覆盖时为 true。当前量化优先使用会主动校验 freshness 的量化端口，不得把 DB-only 历史的旧 `coverageEnd` 当作当前数据。
+- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。必须检查 `readyForAnalysis`、`blockingReasons` 和 `dataQuality.fundOfficialNavFreshness`；基金 NAV 过期、缺失或无法证明新鲜时会 fail-closed。上下文缓存绑定 NAV revision。MCP 默认 `view="compact"`；需要完整份额、成本、官方净值、全部指数明细和下钻引用时使用 `view="full"`。
+- `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。必须检查 `coverageRatio == 1` 和 `metrics.dataQuality.historyComplete`；尾部补数未完成时不得解释为完整回测。
 - `get_portfolio_backtest(run_id, trade_offset=0, trade_limit=100, max_series_points=300)`：按 `run_portfolio_backtest` 返回的 `run_id` 读取已保存结果；走势最多抽样 500 点，交易按 offset/limit 分页，使用 `nextTradeOffset` 继续读取，适合审计长周期结果。
 - `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, data_cutoff_at, strategy_version="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察；`data_cutoff_at` 必填。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。
 - `get_quant_snapshots(strategy_id="", latest_only=false, limit=50, cursor="", start_date="", end_date="", snapshot_id=0, group_id="")`：分页读取不可变信号档案；传 `group_id` 只读取以该分组保存的判断，旧快照归入全部持仓；列表返回摘要，传 `snapshot_id` 读取完整内容。
@@ -379,9 +385,9 @@ clawhub install huahua-daily
 - `get_fund_source_previews(code)`：单只基金 `source_a/source_b/huahua` 来源预览，用于解释或选择数据源。净值公布后，各来源可能返回收盘前归档估值、当前接口已切换的官方值或权威官方净值；同时检查 `source` 和 `last_estimate_snap.source`。`data` 允许缺少未覆盖或无归档的 A/B，这不代表整个请求失败。
 - `get_daily_rank()`：返回已形成当日估值或官方净值快照的活跃基金池排行，不代表全市场全量基金。
 - `get_item_detail(code)`：读取单基金基础详情与持仓信息，不触发量化计算。
-- `get_item_history(code)`
+- `get_item_history(code)`：严格 freshness 模式；后端只能取得过期兜底时会报错，不向 Agent 返回旧历史。
 - `get_item_dividends(code)`
-- `get_fund_timeline(code, source_mode="source_a")`
+- `get_fund_timeline(code, source_mode="source_a")`：仅用于展示当前交易展示日曲线；当前量化结论必须另取 `get_item_estimate` 并检查 freshness，不能把曲线尾点当作新鲜行情证明。
 - `get_fund_fees(code)`：确认天数、申购状态、QDII/限大额日累计限购金额等交易规则。
 - `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只；检查 `complete` 和 `missingCodes`。
 - `get_fund_period_rank(code)`
@@ -401,13 +407,13 @@ clawhub install huahua-daily
 - `get_next_trading_day(date)`
 - `get_fund_profile(code)`：基金画像（综合信息）。
 - `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只；非法代码直接报错；返回 `data`、`complete`、`missingCodes`、`timedOut`，服务端总预算 20 秒。
-- `get_fund_quant_metrics(code, view, ...)`：按需读取后端统一计算的单基金量化数据。`technical` 返回技术卡与历史统计，`momentum` 返回短中期收益/均线偏离/连跌，`risk` 返回中长期收益/回撤/波动，`full` 才组合全部数据；不要无条件请求 `full`。实时估算帧只适用于 `technical/full`。官方口径不接受客户端自定义净值，不输出买卖建议。
-- `get_batch_fund_quant_metrics(codes, view, current_frames=None)`：按相同语义视图批量取数；`technical/momentum/risk` 最多 50 只，`full` 最多 10 只。Agent 不应并发调用多次单只接口，也不应重复拉 NAV 历史计算。顶层 `complete` 只表示所有代码至少有一条官方净值；指标窗口检查 `item.metrics.complete`（`full` 为 `item.official.metrics.complete`），历史统计检查 `item.current.status`。`computing` 按 `retryAfterMs` 稍后重试；使用当前帧时还必须检查 freshness/stale。
+- `get_fund_quant_metrics(code, view, ...)`：按需读取后端统一计算的单基金量化数据。`technical` 返回技术卡与历史统计，`momentum` 返回短中期收益/均线偏离/连跌，`risk` 返回中长期收益/回撤/波动，`full` 才组合全部数据；不要无条件请求 `full`。必须检查 `historyFreshness/historyExpectedAsOf`、指标 `complete` 与 `current.status`。实时估算帧只适用于 `technical/full`。官方口径不接受客户端自定义净值，不输出买卖建议。
+- `get_batch_fund_quant_metrics(codes, view, current_frames=None)`：按相同语义视图批量取数；`technical/momentum/risk` 最多 50 只，`full` 最多 10 只。Agent 不应并发调用多次单只接口，也不应重复拉 NAV 历史计算。必须同时检查顶层 `complete/staleCodes/unverifiedCodes/refreshingCodes`、`item.historyFreshness/historyExpectedAsOf`、指标 `metrics.complete` 和 `current.status`；过期或无法证明新鲜的数据会 fail-closed，并在可行时后台刷新。
 - `get_holder_ranking()`：App 内持有人数排行榜。
 - `get_instrument_catalog()`：指数/ETF 目录。
 - `get_instrument_quotes(codes)`：严格按目录标准代码返回指数/ETF最近物化行情快照，不补默认标的；最多20个。`updatedAt/quoteDate` 是源行情时点，`polledAt` 是缓存采集时点；必须检查 `cacheMeta.freshness/missingCodes/staleCodes/repairingCodes`，repairing 表示后台正在补帧而非本次请求直抓 Yahoo。
-- `get_instrument_timeline(code, range="1d")`：使用目录标准代码读取指数/ETF分时走势，例如 `000300`、`399006`、`KS11`。
-- `get_instrument_history(code, period="1m")`：使用目录标准代码读取指数/ETF历史数据；周期仅支持 `1m/3m/6m/1y`。
+- `get_instrument_timeline(code, range="1d")`：使用目录标准代码读取指数/ETF分时走势，例如 `000300`、`399006`、`KS11`；检查 `latestQuote.freshness`。
+- `get_instrument_history(code, period="1m")`：使用目录标准代码读取指数/ETF 日线历史；周期仅支持 `1m/3m/6m/1y`。MCP 使用严格 freshness 模式，stale/unknown 时直接报错，不向 Agent 返回旧日线。
 
 交易请求：
 

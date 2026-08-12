@@ -268,14 +268,18 @@ async def get_daily_rank() -> dict:
 
 async def get_item_history(code: str) -> list:
     """
-    获取项目历史净值数据（用于查看过去走势）。
+    获取项目历史净值数据（用于查看过去走势）。服务端会严格校验最新应有
+    官方净值日；刷新失败且只能取得过期历史时，本工具报错而不返回旧列表。
 
     Args:
         code: 项目编号，如 "000001"
     """
     _require_token()
     validated_code = _validate_fund_code(code)
-    data = await _get(f"/api/history/{validated_code}")
+    data = await _get(
+        f"/api/history/{validated_code}",
+        params={"strictFreshness": True},
+    )
     return data if isinstance(data, list) else []
 
 
@@ -295,7 +299,8 @@ async def get_item_dividends(code: str) -> list:
 async def get_fund_timeline(code: str, source_mode: str = "source_a") -> list:
     """
     获取指定项目今日分时估值走势（每隔几分钟一个数据点，盘中更新）。
-    适合了解今日净值走势曲线，判断入场时机。
+    仅用于观察曲线；当前量化结论必须另外调用 get_item_estimate 并检查
+    complete/staleCodes/evidenceComplete，不能把曲线尾点当作新鲜行情证明。
     非交易日或盘前返回空列表。
 
     Args:
@@ -453,6 +458,8 @@ async def get_fund_quant_metrics(
     risk=中长期收益/回撤/波动；full=完整数据。必须按问题选择视图。
     默认使用最新官方净值；如已通过 get_item_estimate 取得盘中估算值，可传
     technical_value 和 value_basis="live_estimate"，避免 Agent 拉取净值历史重复计算。
+    必须检查 historyFreshness/historyExpectedAsOf、metrics.complete 与 current.status；
+    stale/missing/unknown 会 fail-closed，并在可行时后台刷新。
     本工具只提供数据与统计，不输出买卖方向或建议金额。
 
     Args:
@@ -511,9 +518,11 @@ async def get_batch_fund_quant_metrics(
     批量获取后端统一量化数据。technical、momentum、risk 最多 50 只，
     full 最多 10 只。服务端按视图加载依赖并批量读缓存/数据库；
     不要为每只基金并发调用单只接口。本工具不输出投资建议。
-    顶层 complete 只表示所有代码至少有一条官方净值；指标视图的 251 点窗口检查
-    item.metrics.complete，full 检查 item.official.metrics.complete；历史统计检查
-    item.current.status。computing 可按 retryAfterMs 稍后重试，
+    顶层 complete 仅在所有代码都有官方净值且 freshness 可验证时为 true；指标视图的
+    251 点窗口检查 item.metrics.complete，full 检查 item.official.metrics.complete；还必须检查
+    staleCodes、unverifiedCodes、refreshingCodes 与 item.historyFreshness。历史统计检查
+    item.current.status。过期历史会 fail-closed 为 complete=false/computing，并后台刷新；
+    computing 可按 retryAfterMs 稍后重试，
     insufficient_history / insufficient_samples 是当前数据集下的终态。
 
     Args:

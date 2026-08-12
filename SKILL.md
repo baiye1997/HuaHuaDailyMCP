@@ -211,7 +211,7 @@ get_purchase_limit_watchlist()
 
 需要多只基金官方净值时，使用 `get_batch_fund_nav_history`，不要并发循环调用 `get_item_history`。逐基金检查 `coverageStart`、`coverageEnd`、`baselineDate` 和 `complete`；只有请求区间的期初基线与结束边界都覆盖时，`complete` 才为 true。
 
-量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入。`view=full` 的 `market.indices` 包含全部启用指数的服务端预计算收益、均线、回撤、波动和 `trendState`；默认 compact 视图只保留主基准明细。`market.indexGroups`、`market.indexThemes`、`leaders20d`、`laggards20d` 在两种视图中都已完成市场宽度、科技成长等主题结构、平均收益与强弱排序。使用排名前必须检查 `rankingEligible`、`asOf`、`freshness` 和 `market.indexCoverage.rankingAsOf`。Agent 不得再逐指数拉取原始历史或自行计算、计数、排序，只负责解释这些确定性结果。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
+量化复盘优先使用 `get_quant_strategy_context` 获取紧凑、真实、可审计的聚合输入。必须先检查 `readyForAnalysis`、`blockingReasons` 和 `dataQuality.fundOfficialNavFreshness`；存在 stale/missing/unverified 时不得解释逐基金指标、组合风险或执行信号，按后台刷新状态稍后重试。`view=full` 的 `market.indices` 包含全部启用指数的服务端预计算收益、均线、回撤、波动和 `trendState`；默认 compact 视图只保留主基准明细。`market.indexGroups`、`market.indexThemes`、`leaders20d`、`laggards20d` 在两种视图中都已完成市场宽度、科技成长等主题结构、平均收益与强弱排序。使用排名前必须检查 `rankingEligible`、`asOf`、`freshness` 和 `market.indexCoverage.rankingAsOf`。Agent 不得再逐指数拉取原始历史或自行计算、计数、排序，只负责解释这些确定性结果。该上下文不含资讯、Serenity 研究、评分、信号、建议金额或交易建议。
 
 逐基金 `metrics` 已直接提供 `r5Pct`、`r10Pct`、`r20Pct` 等交易点收益，
 `bias5Pct`、`bias10Pct`、`bias20Pct`、`bias60Pct` 分别表示最新官方净值相对最近
@@ -240,7 +240,7 @@ MCP 默认请求 `view=compact`：保留分析就绪状态、风控、执行、�
 `delete_local_pending_ledger_record`。这与外部基金公司订单无关；尚未在 App
 确认的 Agent 请求则通过 `update_agent_request(..., "DISMISSED")` 撤回提示。
 
-历史回测使用 `run_portfolio_backtest`，统一采用零费率。`strategy_type=target_rebalance` 按 `none/daily/weekly/monthly/quarterly` 频率恢复目标权重；`strategy_type=threshold_reentry` 按止盈、止损及反向波动再次买入阈值运行。只能提交基金代码、目标权重、日期、初始资金和这些白名单参数；不得提交动态代码、URL、文件路径或表达式。如果要重试同一次运行，复用同一 `client_run_id`。
+历史回测使用 `run_portfolio_backtest`，统一采用零费率。结果必须满足 `coverageRatio == 1` 且 `metrics.dataQuality.historyComplete == true`；未补齐的 `unresolvedHistoryDates` 是阻断项，不能把截至较早 `dataAsOf` 的局部结果说成完整回测。`strategy_type=target_rebalance` 按 `none/daily/weekly/monthly/quarterly` 频率恢复目标权重；`strategy_type=threshold_reentry` 按止盈、止损及反向波动再次买入阈值运行。只能提交基金代码、目标权重、日期、初始资金和这些白名单参数；不得提交动态代码、URL、文件路径或表达式。如果要重试同一次运行，复用同一 `client_run_id`。
 
 运行成功后保留返回的 `run_id`。需要读取已保存回测、审计完整交易或继续分页时调用：
 
@@ -348,7 +348,7 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
 - 显式选择数据来源 A/B 但该源无覆盖时，后端会继续回退完整花花链路；检查
   `dataSourceSelection.fellBackToHuahua`，不得把回退值
   误述为上游 A/B 的值。该回退只影响对应基金，不应把整批请求判为失败。
-- 历史走势：`get_item_history`。
+- 历史走势：`get_item_history`。该工具使用严格新鲜度模式；后端只能取得过期兜底时会报错。
 - 申购状态、QDII/限大额日累计限购金额、确认天数：`get_fund_fees`（单只）或 `get_batch_fund_fees`（批量，最多 50 只）；批量结果检查 `complete` 和 `missingCodes`。
 - 分红派息：`get_item_dividends`。
 - 近 1/3/6 月、1 年排名：`get_fund_period_rank`（单只）或 `get_batch_fund_period_ranks`（批量，最多 50 只）；批量排名从 `data` 读取并检查 `complete` 和 `missingCodes`。
@@ -373,8 +373,9 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
   `technical/momentum/risk` 最多 50 只，`full` 最多 10 只。
   优先一次批量调用，不要并发调用多次单只接口，也不要拉取 NAV 历史重复计算。
   如传 `current_frames`，同样检查每项的 `estimateFreshness`、`estimateStale` 和
-  `fallbackReason`。`current_frames` 只适用于 `technical/full`。顶层 `complete` 只表示
-  全部代码至少有一条官方净值；指标窗口看 `item.metrics.complete`（`full` 看
+  `fallbackReason`。`current_frames` 只适用于 `technical/full`。顶层必须同时检查
+  `complete`、`staleCodes`、`unverifiedCodes`、`refreshingCodes`，逐项检查
+  `historyFreshness/historyExpectedAsOf`；指标窗口看 `item.metrics.complete`（`full` 看
   `item.official.metrics.complete`），历史统计看 `item.current.status`。`computing` 按
   `retryAfterMs` 稍后重试，
   `insufficient_history` / `insufficient_samples` 是当前数据集下的终态，不得推断缺失
@@ -512,6 +513,9 @@ get_instrument_timeline({"code": "000300"})
 ```json
 get_instrument_history({"code": "000300", "period": "1m"})
 ```
+
+原始日线使用严格 freshness 模式；`stale/unknown` 时工具会报错，不向 Agent 返回旧
+日线。当前均线、收益、回撤、波动和排名仍应使用 `get_index_metrics` 的服务端确定性结果。
 
 ### 4.8 用户问"跑赢大盘/对比沪深300"
 

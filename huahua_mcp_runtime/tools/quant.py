@@ -147,7 +147,7 @@ async def get_portfolio_nav_history(
     benchmark_code: Optional[QuantBenchmarkCode] = "000300",
     group_id: str = "",
 ) -> dict:
-    """获取真实组合的每日收益、单位净值、累计收益和回撤曲线，口径与 App 策略回放完全一致。"""
+    """获取真实组合的每日收益、单位净值、累计收益和回撤曲线。当前区间必须检查 complete 与 navFreshness。"""
     _require_token()
     if not end_date:
         end_date = _beijing_date_string()
@@ -192,7 +192,7 @@ async def get_quant_strategy_context(
     benchmark_code: QuantBenchmarkCode = "000300",
     view: Literal["compact", "full"] = "compact",
 ) -> dict:
-    """一次获取量化上下文；默认紧凑视图，full 用于完整持仓和指数审计。"""
+    """一次获取量化上下文；必须检查 readyForAnalysis 及 dataQuality.fundOfficialNavFreshness。"""
     _require_token()
     if not as_of_date:
         as_of_date = _beijing_date_string()

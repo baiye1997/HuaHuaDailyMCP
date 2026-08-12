@@ -261,7 +261,10 @@ async def get_benchmark_history(code: str = "sh000300") -> list:
     # 验证格式：指数代码（sh/sz开头+6位数字）或 ETF 代码（6位数字）
     if not re.fullmatch(r'(sh|sz)\d{6}|\d{6}', normalized):
         raise ValueError(f"基准代码格式无效：{code}，应为 sh000300 或 510300 格式")
-    data = await _get(f"/api/market/benchmark-history/{normalized}")
+    data = await _get(
+        f"/api/market/benchmark-history/{normalized}",
+        params={"strictFreshness": True},
+    )
     return data if isinstance(data, list) else []
 
 
@@ -338,7 +341,8 @@ async def get_instrument_timeline(code: str, range: str = "1d") -> dict:
 
 async def get_instrument_history(code: str, period: str = "1m") -> dict:
     """
-    获取单个指数/ETF 的日线历史数据。
+    获取单个指数/ETF 的日线历史数据。服务端严格校验最近已收盘交易日；
+    stale/unknown 时本工具报错，不向 Agent 返回旧日线。
     适合分析中长期走势。
 
     Args:
@@ -351,7 +355,14 @@ async def get_instrument_history(code: str, period: str = "1m") -> dict:
         raise ValueError("标的代码不能为空")
     if period not in ("1m", "3m", "6m", "1y"):
         raise ValueError("period 仅支持 1m、3m、6m 或 1y")
-    return await _get("/api/market/indices/history", params={"code": normalized, "period": period})
+    return await _get(
+        "/api/market/indices/history",
+        params={
+            "code": normalized,
+            "period": period,
+            "strictFreshness": True,
+        },
+    )
 
 
 async def calculate_trading_dates(
