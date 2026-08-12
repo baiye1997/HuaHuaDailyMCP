@@ -15,6 +15,10 @@ from .fund_estimate_helpers import (
     sanitize_source_preview_payload as _sanitize_source_preview_payload,
     validate_public_data_source_mode as _validate_public_data_source_mode,
 )
+from .fund_history_helpers import (
+    get_strict_item_history as _get_strict_item_history,
+    search_fund as _search_fund,
+)
 from ..quant_validation import (
     validate_quant_current_frame as _validate_quant_current_frame,
     validate_quant_view as _validate_quant_view,
@@ -27,8 +31,6 @@ if False:  # pragma: no cover - populated by bind() before tool registration
     _post = None
     _require_token = None
     _validate_fund_code = None
-
-
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
 
@@ -42,13 +44,7 @@ async def search_item(query: str) -> list:
         query: 搜索关键词，如 "000001"、"华夏"
     """
     _require_token()
-    normalized = str(query or "").strip()
-    if not normalized:
-        raise ValueError("搜索关键词不能为空")
-    if len(normalized) > 100:
-        raise ValueError("搜索关键词过长，最多 100 字符")
-    data = await _get("/api/search", params={"key": normalized})
-    return data if isinstance(data, list) else []
+    return await _search_fund(_get, query)
 
 
 async def get_item_detail(code: str) -> dict:
@@ -275,12 +271,7 @@ async def get_item_history(code: str) -> list:
         code: 项目编号，如 "000001"
     """
     _require_token()
-    validated_code = _validate_fund_code(code)
-    data = await _get(
-        f"/api/history/{validated_code}",
-        params={"strictFreshness": True},
-    )
-    return data if isinstance(data, list) else []
+    return await _get_strict_item_history(_get, _validate_fund_code, code)
 
 
 async def get_item_dividends(code: str) -> list:
