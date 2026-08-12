@@ -215,4 +215,5 @@ def normalize_night_response(payload: object, requested_view: str) -> dict:
         ),
         "staleCodes": stale_codes,
         "pollerPendingCodes": poller_pending_codes,
+        "timeoutPendingCodes": timeout_pending_codes,
     }

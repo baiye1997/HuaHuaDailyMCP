@@ -23,6 +23,38 @@ def normalize_observed_day(value, *, today: str | None = None) -> str:
     return normalized if normalized <= (today or beijing_date_string()) else ""
 
 
+_MISSING = object()
+
+
+def parse_confirm_days(value) -> int | None:
+    """Parse the same integer 1..30 settlement contract used by the App."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or not number.is_integer():
+        return None
+    parsed = int(number)
+    return parsed if 1 <= parsed <= 30 else None
+
+
+def _estimate_confirm_days(fund: dict, estimate: dict) -> int | None:
+    candidate = _MISSING
+    for source, keys in (
+        (estimate, ("confirm_days", "confirmDays")),
+        (fund, ("confirmDays", "confirm_days")),
+    ):
+        for key in keys:
+            if key in source and source[key] is not None:
+                candidate = source[key]
+                break
+        if candidate is not _MISSING:
+            break
+    return 1 if candidate is _MISSING else parse_confirm_days(candidate)
+
+
 def resolve_official_attribution_date(fund: dict, estimate: dict) -> str:
     """Return a reliable G day paired with the latest official D day."""
     today = beijing_date_string()
@@ -52,15 +84,7 @@ def resolve_official_attribution_date(fund: dict, estimate: dict) -> str:
     if display_date >= nav_date:
         return display_date
 
-    try:
-        confirm_days = int(
-            estimate.get("confirm_days")
-            or estimate.get("confirmDays")
-            or fund.get("confirmDays")
-            or 1
-        )
-    except (TypeError, ValueError):
-        confirm_days = 1
+    confirm_days = _estimate_confirm_days(fund, estimate)
     if confirm_days == 1:
         return nav_date
 

@@ -135,7 +135,16 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 }
 ```
 
-`get_tool_manifest()` 返回当前 profile 与可用能力清单，Agent 可据此自检。
+`get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
+
+### 版本 3.5.4 变更
+
+- 对齐 MCP 全量工具、权限 scope、QDII D→G 日期归属、夜盘默认池与 pending 分类契约；与 App 一致地拒绝空名称的限购观察项。
+
+### 版本 3.5.3 变更
+
+- 夜盘自选和限购观察现在返回与 App 一致的实际生效默认池，并同时保留原始配置与迁移状态；限购检查快照改为读取 App 的 `lastSnapshot`，`snapshot` 仅作为兼容别名。
+- 夜盘批量响应补齐 `timeoutPendingCodes`；QDII D→G 归属对非法确认天数严格保持未归属，不再误降级成 T+1。
 
 ### 版本 3.5.2 变更
 
@@ -317,7 +326,7 @@ clawhub install huahua-daily
 - QDII/T+N 最新官方净值缺少可靠 G 日时，`todayProfit` 和归属日分母不会提前计入；检查 `summary.displayedDayCompleteness.complete` 与 `pendingAttributionCount`，不得把残缺组合描述成完整当日收益。
 - `summary.estimateCompleteness.complete=false`、`timeoutCount>0` 或 `staleCount>0` 表示至少一只持仓缺少可用估值帧；`complete=true` 也只代表有可用数值。`evidenceComplete`、`partialCodes`、汇率与代理证据用于防止 Agent 虚构“完整覆盖”，但普通回答不要主动逐只传播这些技术状态；只有用户明确询问诊断、证据或估算口径时才展开。0 元不能表述为真实零涨跌；过期 last-good 仅供审计，不参与今日收益。
 - `huahua` 是稳定的花花托管策略身份，不承诺固定内部实现。`get_records` 的 holdings/watchlist `estimateAudit` 保留实际 provider、engine、proxyCoverage、fxDegraded、partial、evidenceComplete、fallback 等审计字段；`coverage` 仅在后端审计传输实际提供时存在，普通公开估值接口会隐藏内部覆盖率。日常回答只说明稳定的估值类型、来源、时间、涨幅与净值；只有用户明确要求审计时才解释代理范围，且不能把代理估算描述成持仓股票完整覆盖。
-- 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取用户自选列表，再调用 get_night_estimate。
+- 查询 QDII 夜盘估值时，先调用 get_night_watchlist 获取 App 实际生效列表（可能来自默认池），再调用 get_night_estimate。
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
 - 社区写操作会直接生效，不是 App 待确认请求；收益同步不要凭空编造收益率，通常交给 App 自动同步。
@@ -345,7 +354,7 @@ clawhub install huahua-daily
 - `get_groups()`：读取持仓分组和自选分组。
 - `get_tags()`：读取全局标签和基金标签。
 - `get_portfolio_preferences(include_night_watch=true, include_purchase_limit=true, include_auto_invest=true, include_disciplines=true, code="")`：一次读取夜盘自选、限购观察、定投计划和止盈止损纪律四个 section（共享同一快照缓存，不产生额外网络请求）。core profile 推荐使用本聚合工具；旧单工具在 full profile 保留。
-- `get_purchase_limit_watchlist()`：读取 App 限购观察列表（来自云端实时同步主数据）。
+- `get_purchase_limit_watchlist()`：按 App 迁移规则读取实际生效的限购观察列表；`lastSnapshot` 是最近检查结果，`snapshot` 是兼容别名。
 - `get_auto_invest_plans(code="")`：只读查询 App 定投计划，兼容旧版单计划和新版多计划；可按基金代码筛选，不提供任何写入能力。
 - `get_fund_disciplines(code="")`：只读查询 App 中设置的基金止盈止损纪律及触发状态；可按基金代码筛选，不提供任何写入能力。
 
@@ -377,9 +386,9 @@ clawhub install huahua-daily
 - `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只；检查 `complete` 和 `missingCodes`。
 - `get_fund_period_rank(code)`
 - `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只；结果位于 `data`，检查 `complete` 和 `missingCodes`。
-- `get_night_estimate(codes, force=false, view="forecast")`：最多 30 只，读取 QDII 夜盘最近已物化帧（需会员）。`force` 是废弃兼容参数，true/false 都不会穿透共享缓存或触发上游抓取。forecast 必须检查 `currentComplete`、`warming`、`frameRefreshing`、`pollerPendingCodes` 和 `staleCodes`；`item.fxStatus=omitted` 时本地涨幅仍可 ready/current，但 `evidenceComplete=false`；持仓模型帧的 `item.calibration` 统一给出 `applied/reason/weight/modelVersion`，夜盘只读模型、不训练。last_close 的 stale 是历史收盘快照的正常语义，检查 `complete`，其 `currentComplete=false`。`actual_session_date` 是海外行情交易日，`date` 是北京时间响应日，item 的 `navRequiredDate/lastNavDate` 才是净值 D 日，均不是收益 G 日。
-- `get_night_watchlist()`：读取用户在 App 夜盘估值页手动添加的基金代码列表（来自云端实时同步主数据），通常作为 `get_night_estimate` 的前置工具，免去用户手动报代码。
-- `get_purchase_limit_watchlist()`：读取用户在 App 限购观察页保存的基金列表；可配合 `get_fund_fees` 检查申购状态和限购额度。
+- `get_night_estimate(codes, force=false, view="forecast")`：最多 30 只，读取 QDII 夜盘最近已物化帧（需会员）。`force` 是废弃兼容参数，true/false 都不会穿透共享缓存或触发上游抓取。forecast 必须检查 `currentComplete`、`warming`、`frameRefreshing`、`pollerPendingCodes`、`timeoutPendingCodes` 和 `staleCodes`；`item.fxStatus=omitted` 时本地涨幅仍可 ready/current，但 `evidenceComplete=false`；持仓模型帧的 `item.calibration` 统一给出 `applied/reason/weight/modelVersion`，夜盘只读模型、不训练。last_close 的 stale 是历史收盘快照的正常语义，检查 `complete`，其 `currentComplete=false`。`actual_session_date` 是海外行情交易日，`date` 是北京时间响应日，item 的 `navRequiredDate/lastNavDate` 才是净值 D 日，均不是收益 G 日。
+- `get_night_watchlist()`：读取 App 夜盘估值页实际生效的基金列表；未自定义时 `codes` 已包含默认池，`configuredCodes=[]`、`source=default`，通常作为 `get_night_estimate` 的前置工具。
+- `get_purchase_limit_watchlist()`：按 App 迁移规则返回实际生效的限购观察列表；`lastSnapshot` 是最近检查结果，`snapshot` 是兼容别名，可配合 `get_fund_fees` 检查当前申购状态和限购额度。
 - `get_status()`
 - `get_overview()`
 - `get_sector_wind()`：板块风向，返回领涨/领跌板块和数据时间。

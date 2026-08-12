@@ -111,7 +111,7 @@ get_records({"include_transactions": false})
 get_portfolio_preferences({"include_night_watch": true, "include_purchase_limit": true, "include_auto_invest": true, "include_disciplines": true, "code": ""})
 ```
 
-返回 `nightWatch`（夜盘自选代码，可传给 `get_night_estimate`）、`purchaseLimit`（限购观察，可配合 `get_batch_fund_fees`）、`autoInvest`（定投计划）和 `disciplines`（止盈止损纪律）四个 section。只读，不会创建、修改、暂停或删除任何计划；不得把 `triggered=true` 描述成 Agent 已执行交易。
+返回 `nightWatch`（夜盘实际生效代码，可传给 `get_night_estimate`）、`purchaseLimit`（按 App 迁移规则得到的实际生效限购观察，可配合 `get_batch_fund_fees`）、`autoInvest`（定投计划）和 `disciplines`（止盈止损纪律）四个 section。`nightWatch.configuredCodes` 与 `purchaseLimit.configuredItems` 保留用户原始配置；不要把默认池误述为用户手动添加。只读，不会创建、修改、暂停或删除任何计划；不得把 `triggered=true` 描述成 Agent 已执行交易。
 
 需要单独读取某一类偏好时，也可用旧工具 `get_auto_invest_plans`、`get_fund_disciplines`、`get_night_watchlist`、`get_purchase_limit_watchlist`（full profile）。
 
@@ -205,7 +205,7 @@ get_tags()
 get_purchase_limit_watchlist()
 ```
 
-再按需对返回的代码调用 `get_batch_fund_fees(codes)` 或 `get_fund_fees(code)` 查看申购状态、QDII/限大额日累计限购金额和确认天数。旧版本或尚未同步过该功能的云端主数据可能没有 `purchaseLimitWatchItems`，此时 `has_customized=false`。
+再按需对返回的代码调用 `get_batch_fund_fees(codes)` 或 `get_fund_fees(code)` 查看申购状态、QDII/限大额日累计限购金额和确认天数。`items[].lastSnapshot` 只是 App 最近一次检查快照，当前状态仍以费用接口为准；`snapshot` 是兼容别名。旧版本或尚未同步过该功能的云端主数据会按 App 相同规则并入默认池，并通过 `migrationApplied=true` 标明。
 
 ### 3.6 策略实验室
 
@@ -553,7 +553,7 @@ get_night_estimate({"codes": ["016665", "018147"]})
 - `estimatedNav`：估算净值。
 - `breakdown`：穿透到个股的持仓明细、股价涨跌、汇率变动、贡献度。
 - `status`：`ready`（数据就绪）/ `pending`（等待开盘）/ `closed`（休市）。
-- `currentComplete`：forecast 是否全部为当前新鲜帧；必须同时看 `warming`、`frameRefreshing`、`pollerPendingCodes`、`staleCodes`。
+- `currentComplete`：forecast 是否全部为当前新鲜帧；必须同时看 `warming`、`frameRefreshing`、`pollerPendingCodes`、`timeoutPendingCodes`、`staleCodes`。
 - `complete`：所选 view 的返回完整度。last_close 即使 freshness=stale 也可能是完整固定历史快照，此时 `currentComplete=false` 是正常结果。
 
 注意：
@@ -561,7 +561,7 @@ get_night_estimate({"codes": ["016665", "018147"]})
 - 非美股交易时段返回休市状态，不是错误。
 - `actual_session_date` 是海外行情交易日，顶层 `date` 是北京时间响应日；item 的 `navRequiredDate/lastNavDate` 是基金净值 D 日。它们都不能直接当作基金收益归属 G 日。
 - 不要在 A 股交易时段频繁调用。
-- 夜盘自选列表需要 App 至少做过一次实时同步才能被 MCP 读到；旧版本 App（未升级到含夜盘同步的版本）的云端主数据里没有 nightWatchCodes 字段，此时 `has_customized` 会是 `false`。
+- 夜盘自选列表需要 App 至少做过一次实时同步才能读到用户自定义值；云端主数据没有 `nightWatchCodes` 时，`has_customized=false`、`source=default`，`codes` 已返回与 App 一致的默认池，不能提示用户必须手动逐只添加。
 
 ### 4.10 用户问交易日/T+N
 

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from .tool_registry import CORE_PROFILE, FULL_PROFILE, resolve_profile
+from .tool_registry import CORE_PROFILE, FULL_PROFILE, active_tool_names, resolve_profile
 from .version import __version__
 
 
@@ -116,6 +116,42 @@ def _filter_for_profile(capabilities: dict[str, list[str]], profile: str) -> dic
     }
 
 
+def _tool_scopes(profile: str) -> dict[str, str]:
+    """Expose every active tool's real backend access requirement."""
+    scopes = {
+        "set_token": "local",
+        "get_tool_manifest": "local",
+        "get_app_version": "agent_token:any (backend endpoint public)",
+    }
+    scope_by_capability = {
+        "profile": "profile:read",
+        "portfolio": "portfolio:read",
+        "quant": "quant:read",
+        "market": "market:read",
+        "community": "community:read",
+        "trade": "trade:request",
+        "personal_reports": "messages:write",
+        "imports": "import:request",
+        "misc": "ai:analyze",
+    }
+    for capability, tools in _capabilities().items():
+        for name in tools:
+            scopes.setdefault(name, scope_by_capability[capability])
+    scopes.update({
+        "authorize_community": "community:write",
+        "revoke_community_authorization": "community:write",
+        "follow_community_user": "community:write",
+        "get_batch_fund_nav_history": "market:read",
+        "run_portfolio_backtest": "quant:write",
+        "save_quant_snapshot": "quant:write",
+        "request_import_review": "trade:request",
+    })
+    return {
+        name: scopes[name]
+        for name in active_tool_names(profile)
+    }
+
+
 def _filter_safety_for_profile(safety: dict[str, Any], profile: str) -> dict[str, Any]:
     """Keep tool lists in the safety section aligned with the active profile."""
     if profile == FULL_PROFILE:
@@ -178,6 +214,7 @@ def build_tool_manifest(
             "status": "not_checked",
             "compatible": None,
         },
+        "toolScopes": _tool_scopes(active_profile),
         "capabilities": _filter_for_profile(_capabilities(), active_profile),
         "safety": _filter_safety_for_profile({
             "direct_trading": False,

@@ -1,5 +1,6 @@
 """Portfolio preference and plan MCP tools."""
 
+from ..default_funds import DEFAULT_NIGHT_FUND_CODES, DEFAULT_NIGHT_FUNDS
 from .binding import bind_runtime
 
 
@@ -39,39 +40,88 @@ def fund_disciplines(fund: dict) -> list[dict]:
 def _night_watch_section(portfolio: dict) -> dict:
     raw = portfolio.get("nightWatchCodes")
     has_customized = isinstance(raw, list)
-    codes = [str(c) for c in raw if c] if has_customized else []
+    configured_codes = [str(c) for c in raw if c] if has_customized else []
+    codes = configured_codes if has_customized else list(DEFAULT_NIGHT_FUND_CODES)
     return {
         "codes": codes,
         "count": len(codes),
         "has_customized": has_customized,
+        "source": "custom" if has_customized else "default",
+        "configuredCodes": configured_codes,
+    }
+
+
+def _normalize_purchase_limit_item(item: object) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    code = str(item.get("code") or "").strip()
+    if not _is_valid_fund_code_value(code):
+        return None
+    name = str(item.get("name") or "").strip()
+    # Keep the standalone MCP projection aligned with the App storage
+    # contract: nameless watch items are invalid and are discarded during
+    # restore rather than surfaced as effective preferences.
+    if not name:
+        return None
+    last_snapshot = item.get("lastSnapshot")
+    if not isinstance(last_snapshot, dict):
+        # Keep accepting the short-lived pre-contract MCP spelling for clients
+        # that may have written fixtures against it, while App sync remains the
+        # authoritative lastSnapshot source.
+        last_snapshot = item.get("snapshot")
+    normalized_snapshot = dict(last_snapshot) if isinstance(last_snapshot, dict) else None
+    return {
+        "code": code,
+        "name": name,
+        "type": str(item.get("type") or "").strip(),
+        "addedAt": item.get("addedAt") or "",
+        "lastCheckedAt": item.get("lastCheckedAt") or "",
+        "lastSnapshot": normalized_snapshot,
+        # Backwards-compatible MCP alias. New consumers should use
+        # lastSnapshot, which is the exact App/cloud-sync contract field.
+        "snapshot": normalized_snapshot,
     }
 
 
 def _purchase_limit_section(portfolio: dict) -> dict:
     raw = portfolio.get("purchaseLimitWatchItems")
     has_customized = isinstance(raw, list)
-    items = []
-    seen = set()
+    configured_items = []
+    seen: set[str] = set()
     if has_customized:
         for item in raw:
-            if not isinstance(item, dict):
+            normalized = _normalize_purchase_limit_item(item)
+            if normalized is None or normalized["code"] in seen:
                 continue
-            code = str(item.get("code") or "").strip()
-            if not _is_valid_fund_code_value(code) or code in seen:
+            seen.add(normalized["code"])
+            configured_items.append(normalized)
+
+    defaults_migrated = portfolio.get("purchaseLimitWatchNightDefaultsMigrated") is True
+    items = list(configured_items)
+    if not defaults_migrated:
+        for code, name in DEFAULT_NIGHT_FUNDS:
+            if code in seen:
                 continue
             seen.add(code)
             items.append({
                 "code": code,
-                "name": str(item.get("name") or "").strip(),
-                "type": str(item.get("type") or "").strip(),
-                "addedAt": item.get("addedAt") or "",
-                "snapshot": item.get("snapshot") if isinstance(item.get("snapshot"), dict) else None,
+                "name": name,
+                "type": "",
+                "addedAt": "2026-06-28T00:00:00.000Z",
+                "lastCheckedAt": "",
+                "lastSnapshot": None,
+                "snapshot": None,
             })
     return {
         "items": items,
         "codes": [item["code"] for item in items],
         "count": len(items),
         "has_customized": has_customized,
+        "source": "configured" if defaults_migrated else "migration_default",
+        "configuredItems": configured_items,
+        "configuredCodes": [item["code"] for item in configured_items],
+        "defaultsMigrated": defaults_migrated,
+        "migrationApplied": not defaults_migrated,
     }
 
 
@@ -155,8 +205,10 @@ async def get_portfolio_preferences(
 
     Returns:
         dict 包含：
-        - nightWatch: {codes, count, has_customized}；未自定义时为 {codes: [], count: 0, has_customized: false}
-        - purchaseLimit: {items, codes, count, has_customized}
+        - nightWatch: codes/count 是 App 实际生效列表；未自定义时 source=default，
+          configuredCodes=[] 且 has_customized=false
+        - purchaseLimit: items/codes 是按 App 迁移规则得到的实际生效列表；
+          configuredItems/configuredCodes 保留云端原始配置语义
         - autoInvest: {items, fundCount, planCount, enabledPlanCount}
         - disciplines: {items, fundCount, disciplineCount, triggeredCount}
         - dataUpdatedAt: 云端实时同步主数据时间
@@ -180,7 +232,7 @@ async def get_portfolio_preferences(
 
 async def get_night_watchlist() -> dict:
     """
-    获取用户在 App「夜盘估值」页面手动添加的基金代码列表。
+    获取用户在 App「夜盘估值」页面实际生效的基金代码列表。
 
     数据来自云端实时同步主数据的 nightWatchCodes 字段；典型用法是把
     返回的 codes 作为参数传给 get_night_estimate，实现 "拉取用户自选
@@ -188,11 +240,12 @@ async def get_night_watchlist() -> dict:
 
     Returns:
         dict 包含：
-        - codes: 用户添加的 6 位基金代码列表（list[str]）
+        - codes: App 实际生效的 6 位基金代码列表（list[str]）
         - count: 代码数量
         - has_customized: 用户是否自定义过（False 表示用户从未修改，
-          App 端会回退到内置默认列表；此时返回的 codes 为空，Agent
-          可以提示用户先去 App 添加夜盘自选）
+          此时 codes 已回退到 App 内置默认列表）
+        - source: custom 或 default
+        - configuredCodes: 云端原始自定义列表，未自定义时为空
         - dataUpdatedAt: 云端实时同步主数据时间
     """
     _require_token()
@@ -212,10 +265,13 @@ async def get_purchase_limit_watchlist() -> dict:
 
     Returns:
         dict 包含：
-        - items: 观察项列表，含 code/name/type/addedAt/snapshot
+        - items: App 实际生效的观察项，含 code/name/type/addedAt/
+          lastCheckedAt/lastSnapshot；snapshot 是兼容别名
         - codes: 6 位基金代码列表，可传给 get_fund_fees 批量检查申购状态
         - count: 观察项数量
         - has_customized: 云端主数据是否包含该字段
+        - configuredItems/configuredCodes: 云端原始配置
+        - defaultsMigrated/migrationApplied: App 默认基金迁移状态
         - dataUpdatedAt: 云端实时同步主数据时间
     """
     _require_token()
