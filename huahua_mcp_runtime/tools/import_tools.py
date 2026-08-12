@@ -9,6 +9,7 @@ from typing import Optional  # noqa: F401
 from .binding import bind_runtime
 
 _RUNTIME_DEPENDENCIES = ("_normalize_upload_files", "_post", "_post_files", "_require_token", "_summarize_import_items")
+_MISSING = object()
 
 if False:  # pragma: no cover - populated by bind() before tool registration
     _normalize_upload_files = None
@@ -20,6 +21,60 @@ if False:  # pragma: no cover - populated by bind() before tool registration
 
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
+
+
+def _normalize_transaction_review_item(
+    raw_item: dict,
+    *,
+    infer_missing_match: bool,
+) -> dict:
+    if not isinstance(raw_item, dict):
+        raise ValueError("交易导入 items 的每一项都必须是对象")
+    item = dict(raw_item)
+    code = str(item.get("fund_code") or item.get("code") or "").strip()
+    if not re.fullmatch(r"\d{6}", code) or code == "000000":
+        code = "000000"
+    fund_name = str(item.get("fund_name") or item.get("name") or "").strip()
+    fund_real_name = str(
+        item.get("fund_real_name") or item.get("name") or fund_name
+    ).strip()
+    raw_matched = item.get("matched", _MISSING)
+    if raw_matched is True:
+        matched = True
+    elif raw_matched is False:
+        matched = False
+    elif raw_matched is _MISSING and infer_missing_match:
+        raise ValueError("交易导入 matched 必须是明确的布尔值")
+    else:
+        matched = False
+
+    tx_type = str(item.get("type") or "").strip().upper()
+    if tx_type not in {"BUY", "SELL"}:
+        raise ValueError("交易导入 type 必须是 BUY 或 SELL")
+    time_value = str(item.get("time") or "09:00").strip() or "09:00"
+    time_mode = str(item.get("time_mode") or "").strip().upper()
+    if time_mode not in {"PRE_MARKET", "POST_MARKET"}:
+        try:
+            hour = int(time_value.split(":", 1)[0])
+        except (TypeError, ValueError):
+            hour = 9
+        time_mode = "POST_MARKET" if hour >= 15 else "PRE_MARKET"
+
+    item.update({
+        "type": tx_type,
+        "fund_name": fund_name or fund_real_name,
+        "fund_code": code,
+        "fund_real_name": fund_real_name,
+        "matched": bool(matched),
+        "date": str(item.get("date") or "").strip(),
+        "time": time_value,
+        "time_mode": time_mode,
+        "amount": item.get("amount"),
+        "shares": item.get("shares"),
+        "skip": item.get("skip") is True,
+        "skip_reason": item.get("skip_reason"),
+    })
+    return item
 
 
 async def import_holding_screenshots(
@@ -86,18 +141,22 @@ async def import_transaction_screenshots(
     for item in items:
         if not isinstance(item, dict):
             continue
-        matched = bool(item.get("matched"))
+        normalized_item = _normalize_transaction_review_item(
+            item,
+            infer_missing_match=False,
+        )
+        matched = normalized_item["matched"]
         reason = ""
         if not matched:
             reason = "未匹配到基金代码"
-        elif not item.get("date"):
+        elif not normalized_item.get("date"):
             reason = "交易日期缺失"
-        elif item.get("type") == "BUY" and item.get("amount") is None:
+        elif normalized_item.get("type") == "BUY" and normalized_item.get("amount") is None:
             reason = "买入金额缺失"
-        elif item.get("type") == "SELL" and item.get("shares") is None:
+        elif normalized_item.get("type") == "SELL" and normalized_item.get("shares") is None:
             reason = "卖出份额缺失"
         normalized.append({
-            **item,
+            **normalized_item,
             "match_status": "exact" if matched else "unmatched",
             "resolution_required": bool(reason),
             "resolution_reason": reason,
@@ -141,12 +200,23 @@ async def request_import_review(
     normalized_client_request_id = str(client_request_id or "").strip()
     if normalized_client_request_id and not re.fullmatch(r"[A-Za-z0-9:_-]{1,120}", normalized_client_request_id):
         raise ValueError("client_request_id 仅支持 1-120 位字母、数字、冒号、下划线或连字符")
+    normalized_items = (
+        [
+            _normalize_transaction_review_item(
+                item,
+                infer_missing_match=True,
+            )
+            for item in items
+        ]
+        if normalized_type == "TRANSACTIONS"
+        else items
+    )
     payload_dict = {
         "importType": normalized_type,
         "source": "agent_screenshot",
         "sourceNote": source_note,
-        "summary": _summarize_import_items(items),
-        "items": items,
+        "summary": _summarize_import_items(normalized_items),
+        "items": normalized_items,
     }
     if normalized_client_request_id:
         payload_dict["client_request_id"] = normalized_client_request_id

@@ -1,7 +1,7 @@
 """Portfolio MCP tool implementations."""
 from .binding import RuntimeCallable, bind_runtime
 from . import portfolio_preferences
-from .fund_estimate_helpers import estimate_evidence_summary
+from .fund_estimate_helpers import estimate_audit_payload as _estimate_audit_payload
 from .portfolio_preferences import (
     auto_invest_plans as _auto_invest_plans,
     fund_disciplines as _fund_disciplines,
@@ -42,45 +42,6 @@ def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
     portfolio_preferences.bind(runtime_globals)
     globals()["_runtime_get_records"] = RuntimeCallable(runtime_globals, "get_records")
-
-
-def _estimate_audit_payload(estimate: dict, requested_mode: str) -> dict:
-    decision = estimate.get("estimateDecision")
-    decision = decision if isinstance(decision, dict) else {}
-    selection = estimate.get("dataSourceSelection")
-    selection = selection if isinstance(selection, dict) else {}
-    fallback = decision.get("fallback")
-    fallback = fallback if isinstance(fallback, dict) else None
-    evidence = estimate_evidence_summary(estimate)
-    return {
-        "preference": decision.get("preference")
-        or estimate.get("dataSourceMode")
-        or requested_mode,
-        "provider": decision.get("provider"),
-        "engine": decision.get("engine"),
-        "status": decision.get("status"),
-        "reason": decision.get("reason"),
-        "coverage": evidence.get("coverage"),
-        "proxyCoverage": evidence.get("proxyCoverage"),
-        "fxDegraded": evidence.get("fxDegraded") is True,
-        **(
-            {"fxStatus": evidence.get("fxStatus")}
-            if evidence.get("fxStatus") is not None
-            else {}
-        ),
-        **(
-            {"calibration": evidence.get("calibration")}
-            if isinstance(evidence.get("calibration"), dict)
-            else {}
-        ),
-        "partial": evidence.get("partial") is True,
-        "evidenceComplete": evidence.get("evidenceComplete") is True,
-        "fallback": fallback,
-        "usedProvider": selection.get("usedProvider"),
-        "fellBackToHuahua": selection.get("fellBackToHuahua") is True,
-        "policyRevision": decision.get("policyRevision")
-        or estimate.get("policyRevision"),
-    }
 
 
 async def get_sync_meta() -> dict:

@@ -168,6 +168,65 @@ def estimate_evidence_summary(item: dict) -> dict:
     }
 
 
+def estimate_index_audit_evidence(decision: dict) -> dict:
+    """Keep typed index identity and fallback evidence for MCP diagnostics."""
+
+    if not isinstance(decision, dict):
+        return {}
+    return {
+        key: decision.get(key)
+        for key in (
+            "instrumentType", "canonicalIndexId", "trackedIndexName",
+            "officialIndexName", "officialIndexCode", "market",
+            "quoteProvider", "quoteDate", "targetNavDate", "sourceKind",
+            "fallbackReason", "fallbackTargetCode", "fallbackRelation",
+        )
+        if decision.get(key) is not None
+    }
+
+
+def estimate_audit_payload(estimate: dict, requested_mode: str) -> dict:
+    """Normalize portfolio estimate provenance, quality and index evidence."""
+
+    decision = estimate.get("estimateDecision")
+    decision = decision if isinstance(decision, dict) else {}
+    selection = estimate.get("dataSourceSelection")
+    selection = selection if isinstance(selection, dict) else {}
+    fallback = decision.get("fallback")
+    fallback = fallback if isinstance(fallback, dict) else None
+    evidence = estimate_evidence_summary(estimate)
+    return {
+        "preference": decision.get("preference")
+        or estimate.get("dataSourceMode")
+        or requested_mode,
+        "provider": decision.get("provider"),
+        "engine": decision.get("engine"),
+        "status": decision.get("status"),
+        "reason": decision.get("reason"),
+        "coverage": evidence.get("coverage"),
+        "proxyCoverage": evidence.get("proxyCoverage"),
+        "fxDegraded": evidence.get("fxDegraded") is True,
+        **(
+            {"fxStatus": evidence.get("fxStatus")}
+            if evidence.get("fxStatus") is not None
+            else {}
+        ),
+        **(
+            {"calibration": evidence.get("calibration")}
+            if isinstance(evidence.get("calibration"), dict)
+            else {}
+        ),
+        "partial": evidence.get("partial") is True,
+        "evidenceComplete": evidence.get("evidenceComplete") is True,
+        "fallback": fallback,
+        "usedProvider": selection.get("usedProvider"),
+        "fellBackToHuahua": selection.get("fellBackToHuahua") is True,
+        "policyRevision": decision.get("policyRevision")
+        or estimate.get("policyRevision"),
+        **estimate_index_audit_evidence(decision),
+    }
+
+
 def sanitize_estimate_frame(item):
     """Never expose obsolete calculation details as a usable current frame."""
 
