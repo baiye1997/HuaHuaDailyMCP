@@ -137,6 +137,12 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.0.0 变更
+
+- 组合读取协议强制切换到 PowerSync v3，只接受 `protocolVersion=3` 的规范化组合接口。
+- 组合新鲜度统一为 `portfolioUpdatedAt`，删除旧 `dataUpdatedAt` 别名和多层旧同步载荷解包逻辑。
+- MCP 与 App、Web/PWA、Android 同批强制升级，不保留 v2 同步协议兼容路径。
+
 ### 版本 3.5.6 变更
 
 - 修复 3.5.5 发布门禁：拆分基金工具传输辅助逻辑，保持公开工具签名、描述与严格新鲜度语义不变。

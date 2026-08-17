@@ -75,10 +75,10 @@ get_summary()
 - `totalHoldingProfit`：持有收益。
 - `totalHoldingReturnRate`：持有收益率。
 - `cumulativeProfit`：累计收益；这是本 App 已记录交易推导的累计，仅在用户明确询问历史累计或该字段时使用。
-- `portfolioUpdatedAt`（兼容字段 `dataUpdatedAt`）：云端实时同步主数据时间。
+- `portfolioUpdatedAt`：PowerSync v3 云端实时同步主数据时间。
 - `strategyPreferences.maxDrawdownLimitPct`：用户在策略实验室设置的组合回撤阈值百分数；`0` 表示未启用。不得自行假定为 10%。
 
-回答时必须说明 `portfolioUpdatedAt`（旧客户端可读 `dataUpdatedAt`）。原始数据中的 `data.timestamp`/`meta.payload_timestamp` 只是客户端快照谱系或迁移元数据，不表示同步新鲜度。如果同步时间明显旧，提醒用户在 App 开启实时同步或点击「从云端同步恢复 / 手动同步」相关入口。
+回答时必须说明 `portfolioUpdatedAt`。原始数据中的 `data.timestamp`/`meta.payload_timestamp` 只是客户端快照谱系或迁移元数据，不表示同步新鲜度。如果同步时间明显旧，提醒用户检查 App 的「小窝 → 数据 → 实时同步」连接状态；实时同步没有开关，不应让用户寻找旧版开启入口。
 
 不要为了资产概况先调用 `get_raw_sync_data()`。
 
@@ -97,7 +97,7 @@ get_records({"include_transactions": false})
   已配置定投时含 `autoInvestPlans`。
 - `groups`：分组。
 - `summary`：汇总。
-- `portfolioUpdatedAt`（兼容字段 `dataUpdatedAt`）：云端实时同步主数据时间。
+- `portfolioUpdatedAt`：PowerSync v3 云端实时同步主数据时间。
 
 云端实时同步主数据会保存最后一次官方净值作为恢复基线，但不会保存盘中估值等高频行情。`get_records` 会主动拉取最新行情，并比较行情帧的官方 `dwjz/last_nav_date` 与主数据 `lastNav/lastNavDate`：`marketValue` 使用较新的官方锚点，`valuationNavDate`/`valuationSource` 说明依据；盘中 `estimatedNav` 仅用于 `estimatedMarketValue` 和当日收益，绝不冒充官方市值。
 
@@ -154,7 +154,7 @@ get_sync_meta()
 返回重点：
 - `updated_at`：云端实时同步主数据更新时间。
 - `etag`：云端主数据指纹。
-- `data_source`：`structured_portfolio` 表示结构化实时同步主数据。
+- `data_source`：固定为 `portfolio_v3`，表示 PowerSync v3 权威组合数据。
 - `size_bytes`：主数据大小。
 - `has_restorable_sync_payload`：是否可由新版 App 安全恢复。
 - `empty_portfolio_confirmed`：是否是用户确认过的空组合主数据；为 true 且可恢复时，不要误判为云端损坏。
@@ -541,7 +541,7 @@ QDII 基金投资美股/港股，北京时间夜间才是它们的交易时段�
 
 ```json
 get_night_watchlist()
-// 返回 {"codes": ["016665", "018147", ...], "count": N, "has_customized": true, "dataUpdatedAt": "..."}
+// 返回 {"codes": ["016665", "018147", ...], "count": N, "has_customized": true, "portfolioUpdatedAt": "..."}
 ```
 
 若 `has_customized=false`（用户未自定义过），codes 为空，应提示用户先去 App 夜盘页面添加自选基金，或允许用户手动指定一组代码。
@@ -920,7 +920,7 @@ get_app_version()
 
 - `401`：Token 无效或过期，要求用户重新生成。
 - `403`：权限不足或会员状态不满足；Agent Token 和多数 MCP 能力需要 PRO，部分行情/JCTI 能力可能要求 VIP 或 PRO。
-- 云端无数据：要求用户打开 App 确认实时同步已开启，或从设置页主动同步 / 恢复云端主数据。
+- 云端无数据：要求用户打开 App 检查「小窝 → 数据 → 实时同步」连接状态；如需回滚，再从历史快照入口恢复。
 - 行情估算为空：可能是非交易日、盘前或数据源暂不可用，不要当作错误。
 - 截图识别为空：提示用户换清晰截图，或分批上传。
 - 导入请求发送成功后：不要继续追问大表格细节，等待用户在 App 确认。

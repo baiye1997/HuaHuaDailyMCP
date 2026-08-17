@@ -211,7 +211,7 @@ async def get_portfolio_preferences(
           configuredItems/configuredCodes 保留云端原始配置语义
         - autoInvest: {items, fundCount, planCount, enabledPlanCount}
         - disciplines: {items, fundCount, disciplineCount, triggeredCount}
-        - dataUpdatedAt: 云端实时同步主数据时间
+        - portfolioUpdatedAt: 云端实时同步主数据时间
     """
     _require_token()
     validated_code = _validate_fund_code(code) if code else ""
@@ -225,7 +225,6 @@ async def get_portfolio_preferences(
         sections["autoInvest"] = _auto_invest_section(portfolio, validated_code)
     if include_disciplines:
         sections["disciplines"] = _disciplines_section(portfolio, validated_code)
-    sections["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     sections["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return sections
 
@@ -246,12 +245,11 @@ async def get_night_watchlist() -> dict:
           此时 codes 已回退到 App 内置默认列表）
         - source: custom 或 default
         - configuredCodes: 云端原始自定义列表，未自定义时为空
-        - dataUpdatedAt: 云端实时同步主数据时间
+        - portfolioUpdatedAt: 云端实时同步主数据时间
     """
     _require_token()
     portfolio = await _download_portfolio()
     result = _night_watch_section(portfolio)
-    result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result
 
@@ -272,12 +270,11 @@ async def get_purchase_limit_watchlist() -> dict:
         - has_customized: 云端主数据是否包含该字段
         - configuredItems/configuredCodes: 云端原始配置
         - defaultsMigrated/migrationApplied: App 默认基金迁移状态
-        - dataUpdatedAt: 云端实时同步主数据时间
+        - portfolioUpdatedAt: 云端实时同步主数据时间
     """
     _require_token()
     portfolio = await _download_portfolio()
     result = _purchase_limit_section(portfolio)
-    result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result
 
@@ -293,13 +290,12 @@ async def get_auto_invest_plans(code: str = "") -> dict:
         code: 可选，6 位基金代码；留空返回全部已配置定投的基金。
 
     Returns:
-        dict 包含 items、fundCount、planCount、enabledPlanCount 和 dataUpdatedAt。
+        dict 包含 items、fundCount、planCount、enabledPlanCount 和 portfolioUpdatedAt。
     """
     _require_token()
     validated_code = _validate_fund_code(code) if code else ""
     portfolio = await _download_portfolio()
     result = _auto_invest_section(portfolio, validated_code)
-    result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result
 
@@ -312,12 +308,11 @@ async def get_fund_disciplines(code: str = "") -> dict:
         code: 可选，6 位基金代码；留空返回全部已配置纪律的基金。
 
     Returns:
-        dict 包含 items、fundCount、disciplineCount、triggeredCount 和 dataUpdatedAt。
+        dict 包含 items、fundCount、disciplineCount、triggeredCount 和 portfolioUpdatedAt。
     """
     _require_token()
     validated_code = _validate_fund_code(code) if code else ""
     portfolio = await _download_portfolio()
     result = _disciplines_section(portfolio, validated_code)
-    result["dataUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     result["portfolioUpdatedAt"] = portfolio.get("_meta_updated_at", "")
     return result

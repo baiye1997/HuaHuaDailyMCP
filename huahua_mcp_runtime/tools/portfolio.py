@@ -1,4 +1,7 @@
 """Portfolio MCP tool implementations."""
+
+import json
+
 from .binding import RuntimeCallable, bind_runtime
 from . import portfolio_preferences
 from .fund_estimate_helpers import estimate_audit_payload as _estimate_audit_payload
@@ -19,7 +22,7 @@ __all__ = (
     "get_purchase_limit_watchlist",
 )
 
-_RUNTIME_DEPENDENCIES = ("_calc_fund_stats", "_download_portfolio", "_download_portfolio_raw", "_fetch_estimates", "_get", "_is_valid_fund_code_value", "_normalize_data_source_mode", "_portfolio_payload_source", "_r2", "_ratio_pct", "_require_token", "_to_float", "_unwrap_sync_payload", "_validate_fund_code")
+_RUNTIME_DEPENDENCIES = ("_calc_fund_stats", "_download_portfolio", "_download_portfolio_raw", "_fetch_estimates", "_get", "_is_valid_fund_code_value", "_normalize_data_source_mode", "_r2", "_ratio_pct", "_require_token", "_to_float", "_unwrap_sync_payload", "_validate_fund_code")
 if False:  # pragma: no cover - populated by bind() before tool registration
     _calc_fund_stats = None
     _download_portfolio = None
@@ -28,7 +31,6 @@ if False:  # pragma: no cover - populated by bind() before tool registration
     _get = None
     _is_valid_fund_code_value = None
     _normalize_data_source_mode = None
-    _portfolio_payload_source = None
     _r2 = None
     _ratio_pct = None
     _require_token = None
@@ -50,7 +52,7 @@ async def get_sync_meta() -> dict:
     返回 updated_at、etag、size_bytes 和历史快照摘要，用于判断 App 数据是否已经同步到云端。
     """
     _require_token()
-    meta = await _get("/api/sync/meta")
+    meta = await _get("/api/sync/v3/meta")
     if isinstance(meta, dict):
         restorable_count = int(meta.get("restorable_fund_count") or 0)
         empty_confirmed = meta.get("empty_portfolio_confirmed") is True
@@ -60,13 +62,13 @@ async def get_sync_meta() -> dict:
             and int(meta.get("fund_count") or 0) == 0
         )
         meta["has_restorable_sync_payload"] = restorable_count > 0 or has_empty_tombstone
-        meta["data_source"] = _portfolio_payload_source(meta)
+        meta["data_source"] = "portfolio_v3"
         meta["portfolio_updated_at"] = meta.get("updated_at", "")
         meta["freshness_field"] = "portfolio_updated_at"
-        meta["history_snapshot"] = {
-            "latest_snapshot_created_at": meta.get("latest_snapshot_created_at"),
-            "latest_snapshot_etag": meta.get("latest_snapshot_etag"),
-            "latest_snapshot_source": meta.get("latest_snapshot_source"),
+        meta["sync_cursor"] = {
+            "protocol_version": meta.get("protocol_version"),
+            "sync_epoch": meta.get("sync_epoch"),
+            "change_version": meta.get("change_version"),
         }
     return meta
 
@@ -87,10 +89,10 @@ async def get_raw_sync_data(include_json_text: bool = False) -> dict:
     if include_json_text:
         raw, source = await _download_portfolio_raw()
         parsed = _unwrap_sync_payload(raw if isinstance(raw, dict) else {}, source=source)
-        json_text = raw.get("json_data", "") if isinstance(raw, dict) else ""
+        json_text = json.dumps(raw, ensure_ascii=False) if isinstance(raw, dict) else ""
     else:
         parsed = await _download_portfolio()
-        source = parsed.get("_meta_data_source", "structured_portfolio")
+        source = parsed.get("_meta_data_source", "portfolio_v3")
         json_text = ""
     result = {
         "data": {k: v for k, v in parsed.items() if not k.startswith("_meta_")},
@@ -145,7 +147,6 @@ async def get_transactions(code: str = "", include_pending: bool = True) -> dict
         })
     return {
         "items": items,
-        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
         "portfolioUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
@@ -159,7 +160,6 @@ async def get_groups() -> dict:
     return {
         "groups": portfolio.get("groups", []),
         "watchlistGroups": portfolio.get("watchlistGroups", []),
-        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
         "portfolioUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
@@ -182,7 +182,6 @@ async def get_tags() -> dict:
             }
             for fund in funds
         ],
-        "dataUpdatedAt": portfolio.get("_meta_updated_at", ""),
         "portfolioUpdatedAt": portfolio.get("_meta_updated_at", ""),
     }
 
@@ -192,7 +191,7 @@ async def get_records(include_transactions: bool = False) -> dict:
     获取用户持仓记录，并自动计算今日收益、持有收益、累计收益、市值、持有收益率等字段。
     需要 Agent Token 且账号需开通会员才能使用云端实时同步数据。
 
-    数据来自云端实时同步主数据（portfolioUpdatedAt；兼容字段 dataUpdatedAt）。若刚在 App 中刷新了净值或新增了交易，
+    数据来自 PowerSync v3 云端实时同步主数据（portfolioUpdatedAt）。若刚在 App 中刷新了净值或新增了交易，
     请先确认 App 实时同步已完成后再查询，以获取最新数据。
 
     返回结构：
@@ -205,7 +204,7 @@ async def get_records(include_transactions: bool = False) -> dict:
       - totalHoldingProfit: 持有收益总额（市值 - 成本，不含落袋/已实现收益）
       - totalHoldingReturnRate: 持有收益率（totalHoldingProfit / totalCost × 100%，仅反映浮动亏盈）
       - cumulativeProfit: 累计收益（持有收益 + 已实现收益，含落袋；不代表用户所有平台/历史交易的完整累计）
-    - portfolioUpdatedAt/dataUpdatedAt: 云端实时同步主数据的最后更新时间（UTC）
+    - portfolioUpdatedAt: 云端实时同步主数据的最后更新时间（UTC）
     - summary.valuationCompleteness: 官方市值完整度；freshenedCodes 表示使用行情接口中
       比组合快照更新的官方净值锚点修正估值
     - holdings[].valuationNavDate/valuationSource: 官方市值采用的净值日期和来源；
@@ -544,7 +543,6 @@ async def get_records(include_transactions: bool = False) -> dict:
         "strategyPreferences": {
             "maxDrawdownLimitPct": max_drawdown_limit_pct,
         },
-        "dataUpdatedAt": data_updated_at,
         "portfolioUpdatedAt": data_updated_at,
         "dataSource": data_source,
     }
@@ -555,6 +553,5 @@ async def get_summary() -> dict:
     _require_token()
     result = await _runtime_get_records()
     summary = result.get("summary", {})
-    summary["dataUpdatedAt"] = result.get("dataUpdatedAt", "")
     summary["portfolioUpdatedAt"] = result.get("portfolioUpdatedAt", "")
     return summary

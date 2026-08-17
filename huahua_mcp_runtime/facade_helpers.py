@@ -264,5 +264,5 @@ async def download_portfolio(runtime: dict[str, Any]) -> dict:
 
 
 async def download_portfolio_raw(runtime: dict[str, Any]) -> tuple[dict, str]:
-    structured = await runtime["_get"]("/api/portfolio/snapshot")
-    return structured if isinstance(structured, dict) else {}, "structured_portfolio"
+    state = await runtime["_get"]("/api/sync/v3/state")
+    return state if isinstance(state, dict) else {}, "portfolio_v3"
