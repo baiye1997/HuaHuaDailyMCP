@@ -137,6 +137,12 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.0.1 变更
+
+- 持仓记录的基金类型和行业改由后端估算/基础信息 overlay 补全。
+- 未知 `confirmDays` 不再猜测为 T+1，避免 QDII/T+N 收益归属错误。
+- 明确原始同步工具默认返回兼容投影，按需才附带底层 JSON。
+
 ### 版本 4.0.0 变更
 
 - 组合读取协议强制切换到 PowerSync v3，只接受 `protocolVersion=3` 的规范化组合接口。
@@ -362,7 +368,7 @@ clawhub install huahua-daily
 云端实时同步与持仓：
 
 - `get_sync_meta()`：读取云端实时同步主数据更新时间、etag、大小，并返回最新云端历史快照摘要。新鲜度以 `portfolio_updated_at` 为准。
-- `get_raw_sync_data(include_json_text=false)`：读取解析后的完整云端实时同步主数据，优先结构化组合接口。默认复用会话内 30 秒组合缓存；`include_json_text=true` 用于导出/迁移审计，会绕过缓存重新下载原始数据。`data.timestamp`/`meta.payload_timestamp` 只是客户端快照谱系或迁移元数据，不是同步时间。
+- `get_raw_sync_data(include_json_text=false)`：读取完整云端实时同步主数据的兼容投影，优先结构化组合接口；名称中的 `raw` 为兼容保留。默认复用会话内 30 秒组合缓存；只有 `include_json_text=true` 才会为导出/迁移审计绕过缓存并附带底层接口原始 JSON。`data.timestamp`/`meta.payload_timestamp` 只是客户端快照谱系或迁移元数据，不是同步时间。
 - `get_records(include_transactions=false)`：读取持仓、App 中可见的自选、估算收益和汇总；不返回已送养隐藏项，同代码的显式自选优先；会自动使用云端主数据里的全局/单基金行情源偏好，并在已配置时返回 `autoInvestPlans`。官方市值会选取组合快照与行情帧中更新的官方净值锚点，并通过 `valuationNavDate`/`valuationSource` 公示；盘中估值只进入 `estimatedMarketValue`。holdings/watchlist 都返回 source、freshness、estimateAudit，以及 `targetNavDate`/`latestOfficialNavDate`（D 日）、`estimateDisplayDate` 和可靠时才存在的 `returnAttributionDate`（G 日）。
 - `get_summary()`：读取资产摘要。
 - `get_transactions(code="", include_pending=true)`：读取交易流水。

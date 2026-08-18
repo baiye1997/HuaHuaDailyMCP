@@ -52,7 +52,7 @@ def _estimate_confirm_days(fund: dict, estimate: dict) -> int | None:
                 break
         if candidate is not _MISSING:
             break
-    return 1 if candidate is _MISSING else parse_confirm_days(candidate)
+    return None if candidate is _MISSING else parse_confirm_days(candidate)
 
 
 def resolve_official_attribution_date(fund: dict, estimate: dict) -> str:

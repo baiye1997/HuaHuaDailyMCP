@@ -75,7 +75,8 @@ async def get_sync_meta() -> dict:
 
 async def get_raw_sync_data(include_json_text: bool = False) -> dict:
     """
-    获取完整云端实时同步主数据。默认返回解析后的 JSON，不返回原始 JSON 字符串以节省上下文。
+    获取完整云端实时同步主数据的兼容投影。默认返回结构化组合投影；只有
+    include_json_text=true 时才额外返回底层接口原始 JSON 字符串。
 
     实时同步主数据包含 funds、groups、watchlistGroups、globalTags、字段显示配置、
     nightWatchCodes、purchaseLimitWatchItems、marketIndexSelection 等。
@@ -322,7 +323,8 @@ async def get_records(include_transactions: bool = False) -> dict:
         enriched = {
             "code": code,
             "name": fund.get("name", ""),
-            "type": fund.get("type", ""),
+            "type": est.get("type") or fund.get("type", ""),
+            "sector": est.get("sector") or fund.get("sector", ""),
             "groupId": fund.get("groupId", ""),
             "tags": fund.get("tags", []),
             **stats,
@@ -362,7 +364,8 @@ async def get_records(include_transactions: bool = False) -> dict:
             watchlist_item = {
                 "code": code,
                 "name": fund.get("name", ""),
-                "type": fund.get("type", ""),
+                "type": est.get("type") or fund.get("type", ""),
+                "sector": est.get("sector") or fund.get("sector", ""),
                 "lastNav": stats.get("lastNav"),
                 "estimatedNav": stats.get("estimatedNav"),
                 "estimatedChangePercent": stats.get("estimatedChangePercent"),
