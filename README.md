@@ -137,6 +137,12 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.0.2 变更
+
+- 单基金量化结果新增指数 PE、历史分位、官方 PE 基准日及盘中估算口径。
+- 非指数基金新增近 250 个官方净值点的位置分位，支持传入有效盘中估算帧计算今日位置。
+- 指数估值复用后端共享缓存与短暂保留帧；批量量化工具不会触发第三方指数估值源。
+
 ### 版本 4.0.1 变更
 
 - 持仓记录的基金类型和行业改由后端估算/基础信息 overlay 补全。
@@ -423,8 +429,8 @@ clawhub install huahua-daily
 - `get_next_trading_day(date)`
 - `get_fund_profile(code)`：基金画像（综合信息）。
 - `get_batch_fund_profiles(codes)`：批量基金画像，最多 20 只；非法代码直接报错；返回 `data`、`complete`、`missingCodes`、`timedOut`，服务端总预算 20 秒。
-- `get_fund_quant_metrics(code, view, ...)`：按需读取后端统一计算的单基金量化数据。`technical` 返回技术卡与历史统计，`momentum` 返回短中期收益/均线偏离/连跌，`risk` 返回中长期收益/回撤/波动，`full` 才组合全部数据；不要无条件请求 `full`。必须检查 `historyFreshness/historyExpectedAsOf`、指标 `complete` 与 `current.status`。实时估算帧只适用于 `technical/full`。官方口径不接受客户端自定义净值，不输出买卖建议。
-- `get_batch_fund_quant_metrics(codes, view, current_frames=None)`：按相同语义视图批量取数；`technical/momentum/risk` 最多 50 只，`full` 最多 10 只。Agent 不应并发调用多次单只接口，也不应重复拉 NAV 历史计算。必须同时检查顶层 `complete/staleCodes/unverifiedCodes/refreshingCodes`、`item.historyFreshness/historyExpectedAsOf`、指标 `metrics.complete` 和 `current.status`；过期或无法证明新鲜的数据会 fail-closed，并在可行时后台刷新。
+- `get_fund_quant_metrics(code, view, ...)`：按需读取后端统一计算的单基金量化数据。`technical` 返回技术卡、位置分位与历史统计：可精确关联境内指数时 `current.indexValuation` 给出指数 PE 与历史分位，其他基金用近 250 个官方净值点的 `navPositionPercentilePct`。指数结果还需检查 `peBasis`：`live_index_price_estimate` 以 `officialPeAsOf` 的官方 PE 为基准、按今日指数点位估算，`official_daily` 直接使用 `dataAsOf` 当日官方 PE；`estimateStale=true` 是估值同款的短暂保留帧，后台正在刷新。`momentum` 返回短中期收益/均线偏离/连跌，`risk` 返回中长期收益/回撤/波动，`full` 才组合全部数据。必须检查 `historyFreshness/historyExpectedAsOf`、`current.status`、`current.valueBasis` 与数据日期。传入有效盘中估算帧时，非指数基金的位置分位使用实时估算值；实时估算帧只适用于 `technical/full`。官方口径不接受客户端自定义净值，不输出买卖建议。
+- `get_batch_fund_quant_metrics(codes, view, current_frames=None)`：按相同语义视图批量取数；`technical/momentum/risk` 最多 50 只，`full` 最多 10 只。为避免批量触发第三方估值源，批量结果不包含详情按需字段 `current.indexValuation`；需要指数 PE 时只查询用户正在查看的单只基金。Agent 不应并发调用多次单只接口，也不应重复拉 NAV 历史计算。必须同时检查顶层 `complete/staleCodes/unverifiedCodes/refreshingCodes`、`item.historyFreshness/historyExpectedAsOf`、指标 `metrics.complete` 和 `current.status`；过期或无法证明新鲜的数据会 fail-closed，并在可行时后台刷新。
 - `get_holder_ranking()`：App 内持有人数排行榜。
 - `get_instrument_catalog()`：指数/ETF 目录。
 - `get_instrument_quotes(codes)`：严格按目录标准代码返回指数/ETF最近物化行情快照，不补默认标的；最多20个。`updatedAt/quoteDate` 是源行情时点，`polledAt` 是缓存采集时点；必须检查 `cacheMeta.freshness/missingCodes/staleCodes/repairingCodes`，repairing 表示后台正在补帧而非本次请求直抓 Yahoo。

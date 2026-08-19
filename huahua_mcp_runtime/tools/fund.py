@@ -1,12 +1,6 @@
 """fund MCP tool implementations."""
 
-import asyncio  # noqa: F401
-import json  # noqa: F401
-import os  # noqa: F401
-import re  # noqa: F401
-import time  # noqa: F401
 from typing import Optional  # noqa: F401
-
 from .binding import bind_runtime
 from .fund_estimate_helpers import (
     estimate_evidence_summary as _estimate_evidence_summary,
@@ -445,12 +439,18 @@ async def get_fund_quant_metrics(
 ) -> dict:
     """
     按语义视图获取单只基金由后端统一计算的量化数据。
-    technical=技术卡与历史统计；momentum=短中期收益/均线偏离/连跌；
+    technical=技术卡、估值位置与历史统计；momentum=短中期收益/均线偏离/连跌；
     risk=中长期收益/回撤/波动；full=完整数据。必须按问题选择视图。
     默认使用最新官方净值；如已通过 get_item_estimate 取得盘中估算值，可传
     technical_value 和 value_basis="live_estimate"，避免 Agent 拉取净值历史重复计算。
     必须检查 historyFreshness/historyExpectedAsOf、metrics.complete 与 current.status；
     stale/missing/unknown 会 fail-closed，并在可行时后台刷新。
+    可精确关联境内指数时，technical.current.indexValuation 返回指数 PE 与历史分位；
+    peBasis=live_index_price_estimate 表示 PE 按今日指数点位估算，officialPeAsOf 是官方 PE 基准日，
+    peBasis=official_daily 表示直接使用 dataAsOf 当日官方 PE；estimateStale=true 表示正在后台刷新、
+    当前返回的是短暂保留的最近估算帧；
+    其他基金的 navPositionPercentilePct 使用近 250 个官方净值点作为分布，传入
+    live_estimate 时以实时估算净值计算今日位置。必须检查 valueBasis 与数据日期。
     本工具只提供数据与统计，不输出买卖方向或建议金额。
 
     Args:

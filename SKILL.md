@@ -362,16 +362,24 @@ get_batch_fund_quant_metrics({"codes": ["110022", "161725"], "view": "momentum"}
   不得臆造画像或把部分结果当完整结果。任何非法基金代码都会使调用直接
   失败，不会被静默跳过。
 - 单基金量化数据：`get_fund_quant_metrics`。必须按问题选择视图：`technical`
-  只取技术卡与历史统计，`momentum` 只取短中期收益、均线偏离和连跌，`risk`
+  只取技术卡、估值位置与历史统计，`momentum` 只取短中期收益、均线偏离和连跌，`risk`
   只取中长期收益、回撤和波动，只有确实同时需要两类数据时才用 `full`。这些数据
   均由后端按统一口径计算；如已取得盘中估算帧，可在 `technical/full` 视图传
   `technical_value`、`value_basis="live_estimate"` 及日期字段。同步传递估算结果的
   `freshness`、`stale`、`fallbackReason` 和 `lastGoodCapturedAt`；响应为
   `estimateFreshness="stale"` 或 `"unavailable"` 时必须明确数据口径，不能当作新鲜
-  盘中值。`value_basis="official_nav"` 时不得传入自定义净值，官方值始终由服务端读取。
+  盘中值。可精确关联境内指数时，读取 `current.indexValuation` 的 PE、历史分位和
+  `peBasis`；`live_index_price_estimate` 表示以 `officialPeAsOf` 的官方 PE 为基准、按今日
+  指数点位估算，`official_daily` 表示直接使用 `dataAsOf` 当日官方 PE。
+  `estimateStale=true` 时是估值同款的短暂保留帧，后台正在刷新；可展示为“最近估算”。
+  其他基金的 `current.navPositionPercentilePct` 是当前值在近 250 个官方净值点中的
+  位置。必须同时读取 `valueBasis`；`value_basis="official_nav"` 时不得
+  传入自定义净值，官方值始终由服务端读取。
 - 多基金排序/对比：`get_batch_fund_quant_metrics`。必须传语义视图；
   `technical/momentum/risk` 最多 50 只，`full` 最多 10 只。
   优先一次批量调用，不要并发调用多次单只接口，也不要拉取 NAV 历史重复计算。
+  批量接口为避免触发第三方估值源，不返回详情按需字段 `current.indexValuation`；
+  只有用户明确查看某只指数基金的 PE 时，才调用单基金接口。
   如传 `current_frames`，同样检查每项的 `estimateFreshness`、`estimateStale` 和
   `fallbackReason`。`current_frames` 只适用于 `technical/full`。顶层必须同时检查
   `complete`、`staleCodes`、`unverifiedCodes`、`refreshingCodes`，逐项检查
