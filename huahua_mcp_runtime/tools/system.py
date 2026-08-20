@@ -14,6 +14,8 @@ _RUNTIME_DEPENDENCIES = ("_OFFICIAL_API", "_clear_session_caches", "_get", "_req
 
 _EXPECTED_QUANT_SCHEMA_VERSION = "quant-v2"
 _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION = "quant_strategy_context.v3"
+_EXPECTED_AGENT_SCHEMA_VERSION = "agent-v1"
+_EXPECTED_AGENT_IMPORT_REVIEW_SCHEMA_VERSION = "agent_import_review.v1"
 _BACKEND_COMPATIBILITY_SUCCESS_TTL = 6 * 60 * 60
 _BACKEND_COMPATIBILITY_FAILURE_TTL = 15 * 60
 _backend_compatibility_cache: dict = {"value": None, "expires_at": 0.0}
@@ -74,7 +76,7 @@ async def get_tool_manifest() -> dict:
     """
     返回本 MCP 服务的能力边界、认证方式和建议调用顺序。
     MCP 启动时会后台检查公开仓库版本；首次调用最多等待该检查 2 秒。
-    同时以最多 2 秒读取后端量化能力握手，报告当前契约是否兼容。
+    同时以最多 2 秒读取后端量化与 Agent 能力握手，分别报告契约是否兼容。
     成功结果在进程内缓存 6 小时，失败结果 15 分钟后重试。
     更新检查失败只会标记 unavailable，不影响能力发现和后续业务工具。
     """
@@ -98,56 +100,90 @@ async def _get_backend_compatibility() -> dict:
             return cached
 
         expected = {
-            "schemaVersion": _EXPECTED_QUANT_SCHEMA_VERSION,
-            "strategyContextSchemaVersion": _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION,
+            "quant": {
+                "schemaVersion": _EXPECTED_QUANT_SCHEMA_VERSION,
+                "strategyContextSchemaVersion": _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION,
+            },
+            "agentImports": {
+                "schemaVersion": _EXPECTED_AGENT_SCHEMA_VERSION,
+                "importReviewSchemaVersion": _EXPECTED_AGENT_IMPORT_REVIEW_SCHEMA_VERSION,
+            },
         }
         try:
-            capabilities = await asyncio.wait_for(_get("/api/quant/capabilities"), timeout=2)
+            quant_result, agent_result = await asyncio.wait_for(
+                asyncio.gather(
+                    _get("/api/quant/capabilities"),
+                    _get("/api/agent/capabilities"),
+                    return_exceptions=True,
+                ),
+                timeout=2,
+            )
         except Exception:
-            result = {
-                "status": "unavailable",
-                "compatible": None,
-                "expected": expected,
-                "reported": None,
-            }
-            _backend_compatibility_cache["value"] = result
-            _backend_compatibility_cache["expires_at"] = (
-                time.monotonic() + _BACKEND_COMPATIBILITY_FAILURE_TTL
-            )
-            return result
-        if not isinstance(capabilities, dict):
-            result = {
-                "status": "invalid",
-                "compatible": False,
-                "expected": expected,
-                "reported": None,
-            }
-            _backend_compatibility_cache["value"] = result
-            _backend_compatibility_cache["expires_at"] = (
-                time.monotonic() + _BACKEND_COMPATIBILITY_FAILURE_TTL
-            )
-            return result
-        features = capabilities.get("features")
-        compatible = (
-            capabilities.get("schemaVersion") == _EXPECTED_QUANT_SCHEMA_VERSION
-            and capabilities.get("strategyContextSchemaVersion") == _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION
-            and isinstance(features, dict)
-            and all(features.get(name) is True for name in (
-                "portfolioPerformance",
-                "backtests",
-                "quantSnapshots",
+            quant_result = agent_result = RuntimeError("capability handshake timeout")
+
+        quant_unavailable = isinstance(quant_result, BaseException)
+        agent_unavailable = isinstance(agent_result, BaseException)
+        quant_invalid = not quant_unavailable and not isinstance(quant_result, dict)
+        agent_invalid = not agent_unavailable and not isinstance(agent_result, dict)
+        quant_capabilities = quant_result if isinstance(quant_result, dict) else None
+        agent_capabilities = agent_result if isinstance(agent_result, dict) else None
+        quant_features = quant_capabilities.get("features") if quant_capabilities else None
+        quant_compatible = (
+            quant_capabilities.get("schemaVersion") == _EXPECTED_QUANT_SCHEMA_VERSION
+            and quant_capabilities.get("strategyContextSchemaVersion") == _EXPECTED_STRATEGY_CONTEXT_SCHEMA_VERSION
+            and isinstance(quant_features, dict)
+            and all(quant_features.get(name) is True for name in (
+                "portfolioPerformance", "backtests", "quantSnapshots",
             ))
+        ) if quant_capabilities is not None else False if quant_invalid else None
+        agent_compatible = (
+            agent_capabilities.get("schemaVersion") == _EXPECTED_AGENT_SCHEMA_VERSION
+            and agent_capabilities.get("importReviewSchemaVersion") == _EXPECTED_AGENT_IMPORT_REVIEW_SCHEMA_VERSION
+        ) if agent_capabilities is not None else False if agent_invalid else None
+
+        component_compatibilities = (quant_compatible, agent_compatible)
+        compatible = (
+            False if False in component_compatibilities
+            else True if all(value is True for value in component_compatibilities)
+            else None
         )
         result = {
-            "status": "compatible" if compatible else "incompatible",
+            "status": (
+                "compatible" if compatible is True
+                else "incompatible" if compatible is False
+                else "unavailable"
+            ),
             "compatible": compatible,
             "expected": expected,
-            "reported": capabilities,
+            "reported": {
+                "quant": quant_capabilities,
+                "agentImports": agent_capabilities,
+            },
+            "components": {
+                "quant": {
+                    "status": (
+                        "unavailable" if quant_unavailable
+                        else "invalid" if quant_invalid
+                        else "compatible" if quant_compatible
+                        else "incompatible"
+                    ),
+                    "compatible": quant_compatible,
+                },
+                "agentImports": {
+                    "status": (
+                        "unavailable" if agent_unavailable
+                        else "invalid" if agent_invalid
+                        else "compatible" if agent_compatible
+                        else "incompatible"
+                    ),
+                    "compatible": agent_compatible,
+                },
+            },
         }
         _backend_compatibility_cache["value"] = result
         ttl = (
             _BACKEND_COMPATIBILITY_SUCCESS_TTL
-            if compatible
+            if compatible is True
             else _BACKEND_COMPATIBILITY_FAILURE_TTL
         )
         _backend_compatibility_cache["expires_at"] = time.monotonic() + ttl

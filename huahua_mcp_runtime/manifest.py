@@ -2,154 +2,16 @@
 
 from typing import Any
 
-from .tool_registry import CORE_PROFILE, FULL_PROFILE, active_tool_names, resolve_profile
+from .tool_registry import (
+    CORE_PROFILE,
+    FULL_PROFILE,
+    active_tool_specs,
+    capabilities_for_profile,
+    resolve_profile,
+    tool_scopes_for_profile,
+    tools_with_effect,
+)
 from .version import __version__
-
-
-def _capabilities() -> dict[str, list[str]]:
-    """Return the full capability lists.
-
-    Cancelled tools (removed in framework v2) are absent from every profile;
-    profile narrowing happens in :func:`_filter_for_profile`.
-    """
-    return {
-        "profile": ["get_current_user"],
-        "portfolio": [
-            "get_sync_meta",
-            "get_raw_sync_data",
-            "get_records",
-            "get_summary",
-            "get_transactions",
-            "get_groups",
-            "get_tags",
-            "get_night_watchlist",
-            "get_purchase_limit_watchlist",
-            "get_auto_invest_plans",
-            "get_fund_disciplines",
-            "get_portfolio_preferences",
-            "get_transaction_ledger",
-            "get_portfolio_nav_history",
-            "get_portfolio_trade_review",
-        ],
-        "quant": [
-            "get_batch_fund_nav_history",
-            "get_quant_strategy_context",
-            "run_portfolio_backtest",
-            "get_portfolio_backtest",
-            "save_quant_snapshot",
-            "get_quant_snapshots",
-            "get_quant_snapshot_review",
-        ],
-        "market": [
-            "search_item",
-            "get_item_estimate",
-            "get_fund_source_previews",
-            "get_item_detail",
-            "get_item_history",
-            "get_item_dividends",
-            "get_fund_timeline",
-            "get_fund_fees",
-            "get_batch_fund_fees",
-            "get_fund_period_rank",
-            "get_batch_fund_period_ranks",
-            "get_fund_profile",
-            "get_batch_fund_profiles",
-            "get_fund_quant_metrics",
-            "get_batch_fund_quant_metrics",
-            "get_night_estimate",
-            "get_daily_rank",
-            "get_status",
-            "get_overview",
-            "get_sector_wind",
-            "get_yesterday_rank",
-            "get_fund_flow",
-            "get_index_metrics",
-            "get_sector_metrics",
-            "get_holder_ranking",
-            "get_benchmark_history",
-            "get_instrument_catalog",
-            "get_instrument_quotes",
-            "get_instrument_timeline",
-            "get_instrument_history",
-            "calculate_trading_dates",
-            "get_next_trading_day",
-        ],
-        "community": [
-            "get_community_ranking",
-            "get_community_my_rank",
-            "get_community_user",
-            "get_community_stats",
-            "get_community_following",
-            "search_community_users",
-            "get_community_authorization",
-            "authorize_community",
-            "revoke_community_authorization",
-            "follow_community_user",
-        ],
-        "trade": ["request_transaction", "get_agent_requests", "update_agent_request"],
-        "personal_reports": ["submit_personal_strategy_report"],
-        "imports": [
-            "import_holding_screenshots",
-            "import_transaction_screenshots",
-            "request_import_review",
-        ],
-        "misc": [
-            "analyze_jcti",
-            "get_app_version",
-        ],
-    }
-
-
-def _filter_for_profile(capabilities: dict[str, list[str]], profile: str) -> dict[str, list[str]]:
-    """Drop full-only tools when the active profile is ``core``.
-
-    Cancelled tools are already absent from the static lists above, so this
-    only narrows the surface; it never re-adds removed tools.
-    """
-    if profile == FULL_PROFILE:
-        return capabilities
-    from .tool_registry import CORE_TOOLS
-
-    return {
-        key: [name for name in names if name in CORE_TOOLS]
-        for key, names in capabilities.items()
-    }
-
-
-def _tool_scopes(profile: str) -> dict[str, str]:
-    """Expose every active tool's real backend access requirement."""
-    scopes = {
-        "set_token": "local",
-        "get_tool_manifest": "local",
-        "get_app_version": "agent_token:any (backend endpoint public)",
-    }
-    scope_by_capability = {
-        "profile": "profile:read",
-        "portfolio": "portfolio:read",
-        "quant": "quant:read",
-        "market": "market:read",
-        "community": "community:read",
-        "trade": "trade:request",
-        "personal_reports": "messages:write",
-        "imports": "import:request",
-        "misc": "ai:analyze",
-    }
-    for capability, tools in _capabilities().items():
-        for name in tools:
-            scopes.setdefault(name, scope_by_capability[capability])
-    scopes.update({
-        "authorize_community": "community:write",
-        "revoke_community_authorization": "community:write",
-        "follow_community_user": "community:write",
-        "get_batch_fund_nav_history": "market:read",
-        "run_portfolio_backtest": "quant:write",
-        "save_quant_snapshot": "quant:write",
-        "request_import_review": "trade:request",
-    })
-    return {
-        name: scopes[name]
-        for name in active_tool_names(profile)
-    }
 
 
 def _filter_safety_for_profile(safety: dict[str, Any], profile: str) -> dict[str, Any]:
@@ -168,11 +30,6 @@ def _filter_safety_for_profile(safety: dict[str, Any], profile: str) -> dict[str
         values = filtered.get(key)
         if isinstance(values, list):
             filtered[key] = [name for name in values if name in CORE_TOOLS]
-    scopes = filtered.get("quant_tool_scopes")
-    if isinstance(scopes, dict):
-        filtered["quant_tool_scopes"] = {
-            name: scope for name, scope in scopes.items() if name in CORE_TOOLS
-        }
     return filtered
 
 
@@ -214,53 +71,30 @@ def build_tool_manifest(
             "status": "not_checked",
             "compatible": None,
         },
-        "toolScopes": _tool_scopes(active_profile),
-        "capabilities": _filter_for_profile(_capabilities(), active_profile),
+        "toolScopes": tool_scopes_for_profile(active_profile),
+        "toolMetadata": {
+            spec.name: {
+                "domain": spec.domain,
+                "profile": spec.profile,
+                "payloadClass": spec.payload_class,
+                "deprecated": spec.deprecated,
+            }
+            for spec in active_tool_specs(active_profile)
+        },
+        "capabilities": capabilities_for_profile(active_profile),
         "safety": _filter_safety_for_profile({
             "direct_trading": False,
             "trade_flow": "request_transaction 支持买入金额、卖出金额/份额和精确分组，只创建待确认信号，必须由用户在 App 内确认。",
             "trade_request_idempotency": "同一交易或导入请求重试时复用 client_request_id；服务端按当前用户在 7 天窗口内去重。",
             "agent_request_update_boundary": "MCP 只能把待确认请求标记为 DISMISSED；PROCESSED 必须由 App 在用户确认后设置。",
-            "direct_state_change_tools": [
-                "authorize_community",
-                "revoke_community_authorization",
-                "follow_community_user",
-                "request_transaction",
-                "update_agent_request",
-                "request_import_review",
-                "submit_personal_strategy_report",
-                "run_portfolio_backtest",
-                "save_quant_snapshot",
-            ],
-            "confirmation_required_tools": [
-                "authorize_community",
-                "revoke_community_authorization",
-                "follow_community_user",
-                "request_transaction",
-                "update_agent_request",
-                "request_import_review",
-                "submit_personal_strategy_report",
-            ],
-            "non_idempotent_toggle_tools": ["follow_community_user"],
+            "direct_state_change_tools": tools_with_effect(active_profile, "state_change"),
+            "confirmation_required_tools": tools_with_effect(active_profile, "confirmation_required"),
+            "non_idempotent_toggle_tools": tools_with_effect(active_profile, "non_idempotent_toggle"),
             "personal_report_write": True,
             "personal_report_flow": "submit_personal_strategy_report 只写入当前 Agent Token 所属用户的报告中心；不能指定 user_id 或广播。",
             "personal_report_required_scope": "agent:full（默认 Token 已包含）",
             "quant_snapshot_write": True,
             "quant_snapshot_write_boundary": "仅归档 token 所属用户的策略观察；真实持仓、组合版本和内容哈希由服务端捕获，不保存建议金额。",
-            "quant_tool_scopes": {
-                "get_transaction_ledger": "portfolio:read",
-                "get_portfolio_nav_history": "portfolio:read",
-                "get_portfolio_trade_review": "portfolio:read",
-                "get_batch_fund_nav_history": "market:read",
-                "get_fund_quant_metrics": "market:read",
-                "get_batch_fund_quant_metrics": "market:read",
-                "get_quant_strategy_context": "quant:read",
-                "run_portfolio_backtest": "quant:write",
-                "get_portfolio_backtest": "quant:read",
-                "get_quant_snapshots": "quant:read",
-                "get_quant_snapshot_review": "quant:read",
-                "save_quant_snapshot": "quant:write",
-            },
             "quant_data_basis": "单基金指标使用官方净值 D 日；组合回放使用 linked_daily_return_v1 的 G 日归属；QDII 夜盘仅作执行参考；回测零费率；不宣称严格 point-in-time。",
             "public_report_write": False,
             "cloud_sync_read": "get_records/get_summary/get_raw_sync_data 读取云端实时同步主数据；固定使用结构化组合接口，不读取云端历史备份快照。",

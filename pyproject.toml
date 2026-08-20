@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 huahua-daily = "server:main"
+huahua = "huahua_mcp_runtime.cli:main"
 
 [tool.setuptools]
 py-modules = ["server"]

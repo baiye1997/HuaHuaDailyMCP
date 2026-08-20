@@ -7,6 +7,7 @@ every compatible tool. Cancelled tools are not registered at all.
 """
 
 import os
+from dataclasses import dataclass
 from typing import Optional
 
 from .tools import community, fund, import_tools, market, portfolio, portfolio_actions, quant, reports, system
@@ -29,9 +30,10 @@ REMOVED_TOOLS = frozenset({
     "get_community_notices",
 })
 
-# High-frequency daily surface. Single-code variants of batch tools and all
-# low-frequency/quant/community tools live only in the full profile.
-CORE_TOOLS = frozenset({
+# Stable daily workflows. Binary screenshot tools intentionally remain full-only:
+# local agents should upload explicit files through the CLI instead of sending Base64
+# through the model context.
+_CORE_TOOL_NAMES = frozenset({
     # system
     "set_token",
     "get_tool_manifest",
@@ -66,8 +68,6 @@ CORE_TOOLS = frozenset({
     "get_agent_requests",
     "update_agent_request",
     # import
-    "import_holding_screenshots",
-    "import_transaction_screenshots",
     "request_import_review",
     # reports
     "submit_personal_strategy_report",
@@ -78,7 +78,7 @@ CORE_TOOLS = frozenset({
 })
 
 TOOL_MODULES = (system, fund, market, portfolio, reports, portfolio_actions, import_tools, community, quant)
-TOOL_NAMES = (
+_TOOL_ORDER = (
     "set_token",
     "get_tool_manifest",
     "get_current_user",
@@ -157,6 +157,121 @@ TOOL_NAMES = (
     "get_app_version",
 )
 
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    domain: str
+    profile: str
+    scope: str
+    effects: frozenset[str] = frozenset()
+    payload_class: str = "small_json"
+    deprecated: bool = False
+
+
+_DOMAIN_BY_MODULE = {
+    system: "profile",
+    fund: "market",
+    market: "market",
+    portfolio: "portfolio",
+    reports: "personal_reports",
+    portfolio_actions: "trade",
+    import_tools: "imports",
+    community: "community",
+    quant: "quant",
+}
+_DOMAIN_OVERRIDES = {
+    "set_token": "local",
+    "get_tool_manifest": "local",
+    "get_app_version": "misc",
+    "analyze_jcti": "misc",
+    "get_transaction_ledger": "portfolio",
+    "get_portfolio_nav_history": "portfolio",
+    "get_portfolio_trade_review": "portfolio",
+    "get_batch_fund_nav_history": "quant",
+}
+_SCOPE_BY_DOMAIN = {
+    "local": "local",
+    "profile": "profile:read",
+    "portfolio": "portfolio:read",
+    "quant": "quant:read",
+    "market": "market:read",
+    "community": "community:read",
+    "trade": "trade:request",
+    "personal_reports": "messages:write",
+    "imports": "import:request",
+    "misc": "ai:analyze",
+}
+_SCOPE_OVERRIDES = {
+    "get_app_version": "agent_token:any (backend endpoint public)",
+    "authorize_community": "community:write",
+    "revoke_community_authorization": "community:write",
+    "follow_community_user": "community:write",
+    "get_batch_fund_nav_history": "market:read",
+    "run_portfolio_backtest": "quant:write",
+    "save_quant_snapshot": "quant:write",
+}
+_CONFIRMATION_REQUIRED = frozenset({
+    "authorize_community",
+    "revoke_community_authorization",
+    "follow_community_user",
+    "request_transaction",
+    "update_agent_request",
+    "request_import_review",
+    "submit_personal_strategy_report",
+})
+_STATE_CHANGE = _CONFIRMATION_REQUIRED | {
+    "run_portfolio_backtest",
+    "save_quant_snapshot",
+}
+_LARGE_JSON_TOOLS = frozenset({
+    "get_raw_sync_data",
+    "get_item_history",
+    "get_instrument_history",
+    "get_batch_fund_nav_history",
+    "submit_personal_strategy_report",
+})
+_BINARY_TOOLS = frozenset({
+    "import_holding_screenshots",
+    "import_transaction_screenshots",
+})
+
+
+def _tool_module(name: str):
+    return next(module for module in TOOL_MODULES if hasattr(module, name))
+
+
+def _build_tool_spec(name: str) -> ToolSpec:
+    domain = _DOMAIN_OVERRIDES.get(name, _DOMAIN_BY_MODULE[_tool_module(name)])
+    effects = set()
+    if name in _STATE_CHANGE:
+        effects.add("state_change")
+    if name in _CONFIRMATION_REQUIRED:
+        effects.add("confirmation_required")
+    if name == "follow_community_user":
+        effects.add("non_idempotent_toggle")
+    payload_class = (
+        "binary" if name in _BINARY_TOOLS
+        else "large_json" if name in _LARGE_JSON_TOOLS
+        else "small_json"
+    )
+    return ToolSpec(
+        name=name,
+        domain=domain,
+        profile=CORE_PROFILE if name in _CORE_TOOL_NAMES else FULL_PROFILE,
+        scope=_SCOPE_OVERRIDES.get(name, _SCOPE_BY_DOMAIN[domain]),
+        effects=frozenset(effects),
+        payload_class=payload_class,
+        deprecated=name in _BINARY_TOOLS,
+    )
+
+
+TOOL_SPECS = tuple(_build_tool_spec(name) for name in _TOOL_ORDER)
+TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
+CORE_TOOLS = frozenset(spec.name for spec in TOOL_SPECS if spec.profile == CORE_PROFILE)
+TOOL_SPEC_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
+
+assert len(TOOL_NAMES) == len(set(TOOL_NAMES)), "tool registry names must be unique"
 assert not (REMOVED_TOOLS & set(TOOL_NAMES)), "cancelled tools must not be registered"
 assert CORE_TOOLS <= set(TOOL_NAMES), "core tools must exist in the registry"
 
@@ -175,10 +290,35 @@ def active_tool_names(profile: Optional[str] = None) -> tuple[str, ...]:
     return TOOL_NAMES
 
 
+def active_tool_specs(profile: Optional[str] = None) -> tuple[ToolSpec, ...]:
+    names = set(active_tool_names(profile))
+    return tuple(spec for spec in TOOL_SPECS if spec.name in names)
+
+
+def capabilities_for_profile(profile: str) -> dict[str, list[str]]:
+    capabilities: dict[str, list[str]] = {}
+    for spec in active_tool_specs(profile):
+        if spec.domain == "local":
+            continue
+        capabilities.setdefault(spec.domain, []).append(spec.name)
+    return capabilities
+
+
+def tool_scopes_for_profile(profile: str) -> dict[str, str]:
+    return {spec.name: spec.scope for spec in active_tool_specs(profile)}
+
+
+def tools_with_effect(profile: str, effect: str) -> list[str]:
+    return [
+        spec.name for spec in active_tool_specs(profile)
+        if effect in spec.effects
+    ]
+
+
 def register_tools(mcp, runtime_globals: dict) -> None:
     names = active_tool_names()
     for name in names:
-        runtime_globals[name] = next(getattr(module, name) for module in TOOL_MODULES if hasattr(module, name))
+        runtime_globals[name] = getattr(_tool_module(name), name)
     for module in TOOL_MODULES:
         module.bind(runtime_globals)
     for name in names:

@@ -1,6 +1,6 @@
 # 花花日记 MCP 服务（HuahuaDaily）
 
-通过 MCP 让 Codex、Codex CLI、Claude Code、Claude Code CLI、Claude Desktop、Cursor、Windsurf、OpenClaw 以及其他支持 MCP 的 Agent 读取花花日记后端数据、查询市场行情、识别截图，并向 App 发送待确认交易或导入请求。
+通过 MCP 让 Codex、Codex CLI、Claude Code、Claude Code CLI、Claude Desktop、Cursor、Windsurf、OpenClaw 以及其他支持 MCP 的 Agent 读取花花日记后端数据、查询市场行情，并向 App 发送待确认交易或导入请求；配套有限 CLI 负责本地文件和完整导出。
 
 交易和导入不会由 Agent 直接写入。Agent 只负责识别、轻确认和发起请求，最终写入必须回到花花日记 App 的现有确认页。
 
@@ -115,9 +115,20 @@ HuahuaDaily 主仓库联调使用工作区 MCP，避免调用已安装的生产�
 MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默认 `full`：
 
 - `full`（默认，76 个工具）：全部能力，兼容历史配置。
-- `core`（35 个工具）：仅高频日常能力（持仓、行情、交易请求、截图导入、量化上下文），
+- `core`（33 个工具）：仅高频日常能力（持仓、行情、交易请求、结构化导入、量化上下文），
   适合希望减少工具 schema 注入与选择成本的 Agent。core 下取消的工具会返回
   unknown-tool 错误；manifest 的 `capabilities` 与 `safety` 会同步收窄。
+
+本地截图不要转 Base64 交给模型。安装同一 Python 包后使用有限文件 CLI：
+
+```bash
+huahua import screenshots --type transactions --file /path/trade.png --result /path/result.json
+huahua import review --type transactions --input /path/result.json
+```
+
+CLI 只负责文件、完整导出和诊断；普通持仓、基金、市场、交易和量化交互继续使用 MCP。
+若 MCP 仅通过 `uvx` 临时运行且 PATH 中没有 `huahua`，使用
+`uvx --from git+https://github.com/baiye1997/HuaHuaDailyMCP huahua ...`。
 
 ```json
 {
@@ -136,6 +147,14 @@ MCP 提供两档工具面，通过环境变量 `HUAHUA_MCP_PROFILE` 选择，默
 ```
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
+
+### 版本 4.1.0 变更
+
+- 新增有限 `huahua` CLI，直接处理截图文件、完整导出、报告文件和连接诊断；图片不再经过模型 Base64。
+- 新增 `/api/agent/import-reviews` 结构化导入契约，文字/表格/JSON 直接使用 `import:request` scope。
+- 新增独立 `/api/agent/capabilities` 契约握手，量化与 Agent 导入兼容状态分域报告。
+- MCP 工具元数据收敛到 ToolSpec；core 调整为 33 个工具，旧 Base64 截图工具仅在 full 兼容并标记弃用。
+- HuahuaDaily Skill 改为短路由器，领域规则按需加载 references。
 
 ### 版本 4.0.2 变更
 
@@ -216,14 +235,16 @@ mcp-server/
 ├── server.py                    # 兼容 facade 与 huahua-daily 控制台入口
 ├── pyproject.toml               # 同时打包 server 与 runtime packages
 └── huahua_mcp_runtime/
+    ├── cli.py                   # 有限文件/大结果 CLI
     ├── client.py                # HTTP、认证、会话与缓存
     ├── facade_helpers.py        # facade 的估算/组合 helper
+    ├── import_contract.py       # MCP 与 CLI 共用的结构化导入契约
     ├── manifest.py              # 工具 manifest
     ├── update_check.py          # 有界、可降级的版本检查
     ├── version.py               # MCP 运行时版本单一来源
     ├── portfolio_adapter.py     # 云端组合适配
     ├── portfolio_math.py        # 组合计算兼容函数
-    ├── tool_registry.py         # 工具注册与 core/full profile 过滤（默认 76 个，core 35 个）
+    ├── tool_registry.py         # ToolSpec 单源与 core/full 过滤（默认 76 个，core 33 个）
     ├── validation.py            # 输入校验
     └── tools/                   # fund/market/portfolio/community/quant 等领域工具
 ```
@@ -329,7 +350,7 @@ clawhub install huahua-daily
 ## System Prompt 模板
 
 ```text
-你可以使用花花日记 HuahuaDaily MCP 工具查询用户基金持仓、交易流水、云同步状态、市场行情和公告，也可以识别截图并把导入结果发送到 App 确认页。
+你可以使用花花日记 HuahuaDaily MCP 工具查询用户基金持仓、交易流水、云同步状态、市场行情和公告，也可以把用户提供的文字、表格、JSON 或截图整理成批量导入请求，发送到 App 确认页。
 
 调用规则：
 - 会话开始可调用 get_tool_manifest 自检能力和安全边界。
@@ -345,7 +366,8 @@ clawhub install huahua-daily
 - 用户明确要求生成并保存个人报告时，调用 `submit_personal_strategy_report` 投递到当前 Token 所属用户的报告中心；重试同一报告必须复用 `client_message_id`。
 - Pro 用户创建的默认 Agent Token 已支持个人报告写入；不能指定其他用户或广播。
 - 不得调用 /api/hermes/reports；公开 MCP 不提供管理员公共报告写入能力。
-- 截图导入先调用 import_holding_screenshots 或 import_transaction_screenshots。
+- 用户已用文字、表格或 JSON 给出批量记录时，校验字段后直接调用 request_import_review，不需要经过截图识别接口。
+- 只有用户输入是图片时才使用 `huahua import screenshots`；不得为新调用选择 MCP Base64 截图工具。
 - 对 unmatched / ambiguous 条目只做轻确认，补齐基金代码、日期、金额、份额等识别歧义。
 - 轻确认后调用 request_import_review，把整批结果发送到 App 现有导入确认页。
 - 不要直接写云同步，不要声称导入已完成；用户必须在 App 批量确认后才会写入。
@@ -358,7 +380,7 @@ clawhub install huahua-daily
 - 查询资金流向时调用 get_fund_flow（需 PRO 会员）。
 - 社区授权/关注/同步等写操作须向用户确认后再执行。
 - 社区写操作会直接生效，不是 App 待确认请求；收益同步不要凭空编造收益率，通常交给 App 自动同步。
-- 截图工具的 image_paths 已禁用（安全限制）：必须使用 images_base64 传图片内容，本地路径会直接报错。
+- full profile 中的旧截图工具仅作兼容且已弃用；新调用使用 `huahua import screenshots` 直接上传显式文件路径，不传 Base64。
 - 用户完成 JCTI 答题后可调用 analyze_jcti 获取 AI 人格分析。
 - 查询 App 版本信息使用 get_app_version。
 ```
@@ -368,7 +390,7 @@ clawhub install huahua-daily
 认证与自检：
 
 - `set_token(token)`：运行时设置 Agent Token。
-- `get_tool_manifest()`：返回能力边界、认证方式、安全说明、MCP 更新预检和 `backendCompatibility` 后端量化契约握手。Agent 在每个会话首次使用 HuahuaDaily 时调用；若 `runtime.updateCheck.updateAvailable=true`，应按 `updateInstructions` 提示用户更新并重启 MCP；若 `backendCompatibility.compatible=false`，不要继续调用量化写入工具。
+- `get_tool_manifest()`：返回能力边界、认证方式、安全说明、MCP 更新预检和 `backendCompatibility.components` 后端分域契约握手。Agent 在每个会话首次使用 HuahuaDaily 时调用；若 `runtime.updateCheck.updateAvailable=true`，应按 `updateInstructions` 提示用户更新并重启 MCP；量化与 Agent 导入分别按自己的 component 判断，不能互相误伤。
 - `get_current_user()`：读取当前账号和会员信息。
 
 云端实时同步与持仓：
@@ -447,11 +469,10 @@ clawhub install huahua-daily
 
 - `submit_personal_strategy_report(title, summary, payload, client_message_id="")`：将当前 Agent 生成的报告保存到 Token 所属用户自己的报告中心。默认 Agent Token 即可使用，只能自投递；不得调用管理员 `/api/hermes/reports` 接口。
 
-截图导入：
+批量导入：
 
-- `import_holding_screenshots(images_base64, import_type="HOLDINGS")`：识别持仓/自选截图（`image_paths` 已禁用，只能传 `images_base64`），返回 `items`、`summary`、`resolution_required` 等字段，不写入数据。`import_type` 只能是 `HOLDINGS`（默认，按基金名称匹配）或 `WATCHLIST`（按 6 位代码优先精确匹配，自选截图务必传此值以提高准确率），未知值会直接报错。
-- `import_transaction_screenshots(images_base64)`：识别交易流水截图（`image_paths` 已禁用，只能传 `images_base64`），返回交易类型、基金匹配、日期、金额/份额和歧义标记，不写入数据。
-- `request_import_review(import_type, items, source_note="Agent screenshot import", client_request_id="")`：把轻确认后的整批结果发送到 App 现有确认页。`import_type` 只能是 `HOLDINGS`、`WATCHLIST`、`TRANSACTIONS`；7 天内重试必须复用 `client_request_id`。
+- `request_import_review(import_type, items, source_note="Agent 整理的批量导入", client_request_id="", source_kind="text")`：把文字、表格或 JSON 的结构化记录发送到 App 批量确认页；`source_kind` 支持 `text/table/json/screenshot/file`，7 天内重试必须复用 `client_request_id`。
+- `import_holding_screenshots` / `import_transaction_screenshots`：只在 full profile 为旧调用兼容，已弃用，不属于 core；新截图工作流使用 `huahua import screenshots`，避免 Base64 经过模型上下文。
 
 社区：
 
@@ -474,11 +495,11 @@ JCTI 投资人格：
 
 - `get_app_version()`：最新版本号、更新日志、下载地址。
 
-## 截图导入流程
+## 批量导入流程
 
-1. Agent 调用截图识别工具，获取结构化结果。
-2. Agent 只对未匹配或有歧义的条目做轻确认。
-3. Agent 调用 `request_import_review` 创建一个批量导入请求。
+1. 文字、表格或 JSON 直接整理为 items，并调用 `request_import_review`。
+2. 本地截图使用 `huahua import screenshots` 写入结构化结果文件，不经过 Base64。
+3. Agent 只对识别歧义做轻确认，再用 `huahua import review` 创建批量导入请求。
 4. App 展示一个 Agent Banner。
 5. 用户点击后进入现有确认页：
    - `IMPORT_HOLDINGS` → 持仓截图导入确认页
@@ -515,7 +536,7 @@ Agent 如需完整审计，应优先读取 `get_transactions` 和 `get_raw_sync_
 - Agent Token 需要 PRO 会员；过期、撤销或会员状态不满足时会被拒绝。
 - MCP 可读取敏感投资数据，包括持仓金额、交易流水和原始云端实时同步主数据；请只授权可信 Agent。
 - 交易类能力只创建待确认请求，不直接写入交易。
-- 截图导入只把识别结果发送到 App 确认页，不直接写入数据。
-- 本地截图路径 `image_paths` 已禁用，必须使用 `images_base64` 传图片内容。
+- 批量导入只创建 App 确认请求，不直接写入数据。
+- full profile 旧截图工具的 `image_paths` 仍禁用；新工作流由 CLI 读取显式文件路径。
 - 社区授权、取消授权、关注/取消关注、社区收益同步是直接写操作，不经过 App 确认页。
 - MCP 不提供云同步覆盖写入工具。

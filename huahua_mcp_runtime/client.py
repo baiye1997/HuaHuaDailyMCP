@@ -135,6 +135,7 @@ def _translate_transport_error(error: Exception) -> None:
         request = error.response.request
         safe_validation_routes = {
             ("POST", "/api/agent/request"),
+            ("POST", "/api/agent/import-reviews"),
             ("POST", "/api/quant/snapshots"),
             ("GET", "/api/quant/strategy-context"),
             ("GET", "/api/market/index-metrics"),
@@ -150,6 +151,8 @@ def _translate_transport_error(error: Exception) -> None:
         if detail:
             raise RuntimeError(f"服务器返回错误 {status_code}：{detail}") from error
         raise RuntimeError(f"服务器返回错误 {status_code}，请稍后重试。") from error
+    if isinstance(error, httpx.RequestError):
+        raise RuntimeError("无法连接花花日记后端，请检查网络和 API 地址。") from error
     raise error
 
 
@@ -169,7 +172,7 @@ async def get(path: str, params: dict = None) -> dict:
         response.raise_for_status()
     except ValueError:
         raise
-    except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
+    except (httpx.RequestError, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
     return _decode_json(response)
 
@@ -185,7 +188,7 @@ async def get_optional(path: str, params: dict = None) -> Optional[dict]:
         response.raise_for_status()
     except ValueError:
         raise
-    except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
+    except (httpx.RequestError, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
     return _decode_json(response)
 
@@ -199,7 +202,7 @@ async def post(path: str, body: dict = None, params: dict = None) -> dict:
         response.raise_for_status()
     except ValueError:
         raise
-    except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
+    except (httpx.RequestError, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
     return _decode_json(response)
 
@@ -224,7 +227,7 @@ async def post_files(
         response.raise_for_status()
     except ValueError:
         raise
-    except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
+    except (httpx.RequestError, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
     return _decode_json(response)
 
@@ -238,7 +241,7 @@ async def put(path: str, body: dict = None) -> dict:
         response.raise_for_status()
     except ValueError:
         raise
-    except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
+    except (httpx.RequestError, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
     return _decode_json(response)
 
@@ -252,6 +255,6 @@ async def delete(path: str) -> dict:
         response.raise_for_status()
     except ValueError:
         raise
-    except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
+    except (httpx.RequestError, httpx.HTTPStatusError) as error:
         _translate_transport_error(error)
     return _decode_json(response)
