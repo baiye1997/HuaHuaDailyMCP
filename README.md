@@ -148,6 +148,11 @@ CLI 只负责文件、完整导出和诊断；普通持仓、基金、市场、�
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.1.1 变更
+
+- 历史量化上下文只回放可靠的新版组合记录；永久删除的基金或交易不会在旧日期重新出现。
+- 对早于可靠数据起点或最近一次重置、恢复的数据请求保持拒绝，并返回可核对的原因和可靠起始日期。
+
 ### 版本 4.1.0 变更
 
 - 新增有限 `huahua` CLI，直接处理截图文件、完整导出、报告文件和连接诊断；图片不再经过模型 Base64。
@@ -413,7 +418,7 @@ clawhub install huahua-daily
 - `get_portfolio_nav_history(start_date="", end_date="", benchmark_code="000300", group_id="")`：真实组合单位净值、累计收益、每日收益和回撤；当前区间必须检查 `complete` 与 `navFreshness.complete/staleCodes/missingCodes/unverifiedCodes`，共同停在旧日期的组合不会再报告完整。
 - `get_portfolio_trade_review(start_date, end_date, benchmark_code="000300", group_id="")`：读取与 App 相同的加减仓复盘，以及 T1/T7/T20/T60 后续表现。
 - `get_batch_fund_nav_history(codes, start_date="", end_date="", order="asc")`：一次读取最多 20 只基金的官方历史净值，DB-only，不逐只请求上游；每只基金返回 `coverageStart/coverageEnd/baselineDate/complete`，`complete` 仅在请求区间首尾严格覆盖时为 true。当前量化优先使用会主动校验 freshness 的量化端口，不得把 DB-only 历史的旧 `coverageEnd` 当作当前数据。
-- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。必须检查 `readyForAnalysis`、`blockingReasons` 和 `dataQuality.fundOfficialNavFreshness`；基金 NAV 过期、缺失或无法证明新鲜时会 fail-closed。上下文缓存绑定 NAV revision。MCP 默认 `view="compact"`；需要完整份额、成本、官方净值、全部指数明细和下钻引用时使用 `view="full"`。
+- `get_quant_strategy_context(as_of_date="", group_id="", mode="live", history_window="1y", benchmark_code="000300", view="compact")`：一次返回真实持仓、D 日基金指标、G 日组合风险、实时估值、QDII 夜盘执行参考、交易门禁、有效定投、在途金额和服务端预计算市场结果。必须检查 `readyForAnalysis`、`blockingReasons` 和 `dataQuality.fundOfficialNavFreshness`；基金 NAV 过期、缺失或无法证明新鲜时会 fail-closed。历史模式只使用可靠区间内的 v3 正版本日志，永久删除的基金或交易不会在旧日期复活；早于迁移或最近 reset/restore 的请求会 fail-closed，并在 `dataQuality.historicalPositionReconstruction.structure` 给出 `reliableFrom` 和原因。上下文缓存绑定同一次 v3 读取的 etag 与 NAV revision。MCP 默认 `view="compact"`；需要完整份额、成本、官方净值、全部指数明细和下钻引用时使用 `view="full"`。
 - `run_portfolio_backtest(funds, start_date, end_date, initial_capital=100000, strategy_type="target_rebalance", rebalance_frequency="monthly", take_profit_rate=0.15, stop_loss_rate=0.10, reentry_rate=0.05, benchmark_code="000300", name="Agent 回测", client_run_id="", group_id="")`：运行并保存零费率历史试算；`funds` 为 `[{"code":"000001","name":"基金名称","weight":0.5}, ...]`，`name` 可选，权重和必须为 1。必须检查 `coverageRatio == 1` 和 `metrics.dataQuality.historyComplete`；尾部补数未完成时不得解释为完整回测。
 - `get_portfolio_backtest(run_id, trade_offset=0, trade_limit=100, max_series_points=300)`：按 `run_portfolio_backtest` 返回的 `run_id` 读取已保存结果；走势最多抽样 500 点，交易按 offset/limit 分页，使用 `nextTradeOffset` 继续读取，适合审计长周期结果。
 - `save_quant_snapshot(snapshot_key, snapshot_date, strategy_id, data_cutoff_at, strategy_version="", fund_signals?, market_mode?, features?, risk?, data_quality?, group_id="")`：幂等归档当天策略观察；`data_cutoff_at` 必填。可传资产分组 ID，将真实持仓和逐基金判断限定在该分组；真实持仓、组合版本和内容哈希由服务端捕获。不接受历史回填、虚拟持仓、建议金额或收益字段。

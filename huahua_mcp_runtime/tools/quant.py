@@ -192,7 +192,7 @@ async def get_quant_strategy_context(
     benchmark_code: QuantBenchmarkCode = "000300",
     view: Literal["compact", "full"] = "compact",
 ) -> dict:
-    """一次获取量化上下文；必须检查 readyForAnalysis 及 dataQuality.fundOfficialNavFreshness。"""
+    """一次获取量化上下文；历史模式只回放可靠 v3 数据且永久删除项不会复活，必须检查 readyForAnalysis。"""
     _require_token()
     if not as_of_date:
         as_of_date = _beijing_date_string()
