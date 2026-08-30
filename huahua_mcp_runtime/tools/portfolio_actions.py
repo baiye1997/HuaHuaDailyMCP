@@ -46,6 +46,8 @@ async def request_transaction(
     如用户指定分组，请优先从 get_records 获取稳定的 group_id，同时可填写 group_name 供展示。
     App 只会精确匹配目标分组；匹配失败时弹出分组选择器，不会静默路由到其他持仓。
     重试同一请求时复用 client_request_id，服务端会返回同一条待确认请求，避免重复 Banner。
+    已确认的纯场内标的只支持自选和参考估算；服务端会以
+    exchange_instrument_watchlist_only 拒绝其买卖请求。
 
     Args:
         item_code: 项目编号，如 "110022"

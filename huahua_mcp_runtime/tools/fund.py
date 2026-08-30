@@ -13,6 +13,7 @@ from .fund_history_helpers import (
     get_strict_item_history as _get_strict_item_history,
     search_fund as _search_fund,
 )
+from .fund_rank_helpers import get_batch_period_ranks as _get_batch_period_ranks
 from ..quant_validation import (
     validate_quant_current_frame as _validate_quant_current_frame,
     validate_quant_view as _validate_quant_view,
@@ -27,7 +28,6 @@ if False:  # pragma: no cover - populated by bind() before tool registration
     _validate_fund_code = None
 def bind(runtime_globals: dict) -> None:
     bind_runtime(globals(), runtime_globals, _RUNTIME_DEPENDENCIES)
-
 
 async def search_item(query: str) -> list:
     """
@@ -81,6 +81,10 @@ async def get_item_estimate(
     关联兜底。普通回答只给估值时间、类型、来源、涨幅、净值和官方日期，不主动
     枚举 partial、FX 或覆盖率；用户明确要求诊断时才展开审计证据，并且不能把
     代理估算描述成持仓股票完整覆盖。
+    capabilities.trade=false 表示该场内标的仅支持查看，不得创建持仓、交易或定投。
+    当前响应应优先读取 frameSemantics：exchange_close_price 表示已验证交易日的
+    场内收盘价。静态 estimateSemantics=estimated_nav_not_trade_price 只描述该标的
+    仍可能提供参考净值估算，不能用它覆盖当前收盘帧，也不能把收盘价称为官方净值。
 
     日期字段中，display_date 是估算展示/T 帧日期，target_nav_date 是当前帧对应的
     目标净值 D 日，last_nav_date 是最新官方净值 D 日；可靠收益 G 日只能读取
@@ -570,30 +574,8 @@ async def get_batch_fund_period_ranks(codes: list[str]) -> dict:
         codes: 项目编号列表，如 ["000001", "161725"]，最多 50 个
     """
     _require_token()
-    if len(codes) > 50:
-        raise ValueError("codes 最多支持 50 只基金")
-    # 验证并去重基金代码
-    validated_codes = []
-    seen = set()
-    for code in codes:
-        normalized = _validate_fund_code(code)
-        if normalized not in seen:
-            validated_codes.append(normalized)
-            seen.add(normalized)
-    if not validated_codes:
-        return {
-            "data": {},
-            "requestedCodes": [],
-            "missingCodes": [],
-            "complete": True,
-        }
-    payload = await _post("/api/fund/period-rank/batch", {"codes": validated_codes})
-    data = payload.get("data") if isinstance(payload, dict) else None
-    data = data if isinstance(data, dict) else {}
-    missing_codes = [code for code in validated_codes if code not in data]
-    return {
-        "data": data,
-        "requestedCodes": validated_codes,
-        "missingCodes": missing_codes,
-        "complete": not missing_codes,
-    }
+    return await _get_batch_period_ranks(
+        codes,
+        validate_code=_validate_fund_code,
+        post=_post,
+    )

@@ -8,6 +8,7 @@ import math
 CURRENT_ESTIMATE_SOURCES = frozenset({
     "estimate",
     "estimate_official_confirmation",
+    "exchange_close",
     "gold_spot",
     "huahua",
     "huahua_bond",
