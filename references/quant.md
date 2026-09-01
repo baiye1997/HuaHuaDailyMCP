@@ -3,6 +3,7 @@
 ## 策略上下文
 
 - 默认调用 `get_quant_strategy_context(view="compact")`。
+- 综合持仓分析只调用一次 compact 策略上下文；它已包含持仓、市场、基金指标、执行窗口和数据质量，不再串行调用 `get_records`、`get_overview` 或逐基金量化工具重复取数。
 - 先检查 `readyForAnalysis`、`readyForAction`、`blockingReasons` 和 `dataQuality`，再生成结论。
 - full view 只在 compact 缺少当前分析所需证据时使用。
 

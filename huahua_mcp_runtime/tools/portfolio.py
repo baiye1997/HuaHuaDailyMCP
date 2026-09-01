@@ -552,7 +552,7 @@ async def get_records(include_transactions: bool = False) -> dict:
 
 
 async def get_summary() -> dict:
-    """获取精简持仓总览；收益率使用归属日组合期初市值口径。"""
+    """获取精简持仓总览；只问组合汇总时使用，综合投资分析改用 compact 策略上下文。"""
     _require_token()
     result = await _runtime_get_records()
     summary = result.get("summary", {})

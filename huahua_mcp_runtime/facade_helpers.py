@@ -88,8 +88,8 @@ async def fetch_estimates(
     normalize_mode = runtime["_normalize_data_source_mode"]
     validate_code = runtime["_validate_fund_code"]
     estimate_cache = runtime["_estimate_cache"]
-    session = runtime["_session"]
-    session_generation = int(session.get("generation") or 0)
+    request_generation = runtime["_request_generation"]
+    session_generation = request_generation()
     default_mode = normalize_mode(default_data_source_mode)
     mode_by_code = {
         validate_code(str(code)): normalize_mode(mode)
@@ -145,7 +145,7 @@ async def fetch_estimates(
                 fetched[code_key] = item
                 if (
                     _estimate_item_is_cacheable(item)
-                    and int(session.get("generation") or 0) == session_generation
+                    and request_generation() == session_generation
                 ):
                     mode = normalize_mode(
                         item.get("dataSourceMode") or mode_for(code_key)
@@ -216,7 +216,7 @@ async def fetch_estimates(
 
     try:
         fetched = await asyncio.shield(task)
-        if int(session.get("generation") or 0) != session_generation:
+        if request_generation() != session_generation:
             raise RuntimeError("Agent Token 已在请求期间变更，请重试")
         result.update(fetched)
     finally:
@@ -234,8 +234,8 @@ async def fetch_estimates(
 async def download_portfolio(runtime: dict[str, Any]) -> dict:
     """Download and cache the canonical structured portfolio snapshot."""
     cache = runtime["_portfolio_cache"]
-    session = runtime["_session"]
-    requested_generation = int(session.get("generation") or 0)
+    request_generation = runtime["_request_generation"]
+    requested_generation = request_generation()
     now = time.monotonic()
     if (
         cache["data"] is not None
@@ -244,7 +244,7 @@ async def download_portfolio(runtime: dict[str, Any]) -> dict:
     ):
         return cache["data"]
     async with runtime["_get_download_lock"]():
-        if int(session.get("generation") or 0) != requested_generation:
+        if request_generation() != requested_generation:
             raise RuntimeError("Agent Token 已在请求期间变更，请重试")
         now = time.monotonic()
         if (
@@ -254,7 +254,7 @@ async def download_portfolio(runtime: dict[str, Any]) -> dict:
         ):
             return cache["data"]
         raw, source = await runtime["_download_portfolio_raw"]()
-        if int(session.get("generation") or 0) != requested_generation:
+        if request_generation() != requested_generation:
             raise RuntimeError("Agent Token 已在请求期间变更，请重试")
         parsed = runtime["_unwrap_sync_payload"](raw if isinstance(raw, dict) else {}, source=source)
         cache["data"] = parsed

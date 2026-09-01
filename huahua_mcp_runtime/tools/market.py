@@ -39,7 +39,7 @@ async def get_status() -> dict:
 async def get_overview() -> dict:
     """
     获取整体概览数据，包括主要指数涨跌、热门板块、涨跌排行。
-    适合快速了解今日整体情况。
+    仅适合独立查询市场；综合持仓投资分析使用 compact 策略上下文，避免重复取数。
     各数据块独立降级；单个接口失败时对应字段返回 error，不拖垮其余概览。
     """
     _require_token()

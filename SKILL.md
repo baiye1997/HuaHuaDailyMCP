@@ -1,6 +1,6 @@
 ---
 name: huahua-daily
-version: 4.1.5
+version: 4.1.6
 description: 查询和分析花花日记中的基金持仓、行情、交易、量化与社区数据，并创建需要用户在 App 内确认的交易或批量导入请求。输入是本地图片、完整导出或大型文件时使用配套 huahua CLI。
 ---
 
@@ -8,9 +8,19 @@ description: 查询和分析花花日记中的基金持仓、行情、交易、�
 
 花花日记后端是同步主数据、日期语义、权限、幂等和导入规范化的业务真相；现有组合读取仍保留 MCP 兼容适配层。MCP 用于小型结构化交互；CLI 只用于文件、完整导出和本地诊断。
 
+## 运行模式
+
+- 本地 stdio：Token 来自 `HUAHUA_AGENT_TOKEN`，可使用配套 CLI 处理本地文件。
+- 官方远程 Streamable HTTP：连接 `https://mcp.huahuadaily.cn/mcp`，客户端发送
+  `Authorization: Bearer <Agent Token>`；每个用户使用自己的 Token，远程工具面不暴露 `set_token`。
+- 传输方式不会让 Prompt 自动进入模型。普通请求依据工具描述直接调用；复杂任务才用
+  `get_skill_context(topic="portfolio")`、`date-safety`、`quant` 等按需加载一个主题。
+  只有用户明确需要完整说明时才加载 `full`。
+- `core` 是高频精简工具面，`full` 是完整能力；调用前以 manifest 返回的实际 profile 为准。
+
 ## 开始会话
 
-首次使用先调用 `get_tool_manifest`，确认 profile、版本兼容、scope 和安全边界。需要用户数据的工具必须有 Agent Token；不要索取、展示或复述完整 Token。
+首次接入、配置变更或排障时调用 `get_tool_manifest`，确认 profile、版本兼容、scope 和安全边界；普通会话不要重复调用。需要用户数据的工具必须有 Agent Token；不要索取、展示或复述完整 Token。
 
 manifest 报告版本可更新时只提示用户，不自行安装或覆盖环境。按 `backendCompatibility.components` 分别判断：量化不兼容时停止量化写入，Agent 导入不兼容时停止新导入请求，并说明原因；不要让一个组件的版本差异误伤另一组件。
 
@@ -42,6 +52,7 @@ manifest 报告版本可更新时只提示用户，不自行安装或覆盖环�
 | 用户任务 | 默认入口 | 首选能力 |
 | --- | --- | --- |
 | 今日收益、总资产、持仓明细 | MCP | `get_summary` / `get_records` |
+| 综合持仓投资分析、今日操作建议 | MCP | `get_quant_strategy_context(view="compact")` 单次取齐；不要再串行重复查询持仓、市场和逐基金指标 |
 | 基金和市场查询 | MCP | 搜索、估值、批量画像和市场聚合工具 |
 | 单笔买入或卖出 | MCP | `request_transaction` |
 | 文字、表格、JSON 批量记录 | MCP | `request_import_review` |

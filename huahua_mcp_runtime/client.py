@@ -1,8 +1,10 @@
 """Session state, shared caches, and HTTP transport for the MCP facade."""
 
 import asyncio
+import hashlib
 import os
 import threading
+from contextvars import ContextVar, Token
 from typing import Optional
 
 import httpx
@@ -14,6 +16,10 @@ session: dict = {
     "base_url": OFFICIAL_API,
     "generation": 0,
 }
+request_token: ContextVar[Optional[str]] = ContextVar(
+    "huahua_mcp_request_token",
+    default=None,
+)
 
 http_client: Optional[httpx.AsyncClient] = None
 http_client_lock = threading.Lock()
@@ -61,8 +67,30 @@ def clear_session_caches() -> None:
     estimate_cache.clear()
 
 
+def bind_request_token(token: str) -> Token:
+    """Bind one remote Bearer token to the current async request context."""
+    return request_token.set(token)
+
+
+def reset_request_token(context_token: Token) -> None:
+    request_token.reset(context_token)
+
+
+def active_token() -> str:
+    return (request_token.get() or session["token"]).strip()
+
+
+def request_generation() -> int:
+    """Return an opaque cache generation without retaining the remote token."""
+    remote_token = request_token.get()
+    if remote_token:
+        digest = hashlib.sha256(remote_token.encode()).digest()
+        return int.from_bytes(digest, "big")
+    return int(session.get("generation") or 0)
+
+
 def require_token() -> None:
-    if not session["token"]:
+    if not active_token():
         raise ValueError(
             "未配置 Agent Token。请在 MCP server env 中设置 HUAHUA_AGENT_TOKEN"
             "，或调用 set_token 工具。"
@@ -71,17 +99,17 @@ def require_token() -> None:
 
 
 def headers() -> dict:
-    token = session["token"]
+    token = active_token()
     return {"Authorization": f"AgentToken {token}"} if token else {}
 
 
 def request_context() -> tuple[dict, int]:
     """Capture auth headers and the session generation as one request context."""
-    return headers(), int(session.get("generation") or 0)
+    return headers(), request_generation()
 
 
 def assert_session_generation(generation: int) -> None:
-    if int(session.get("generation") or 0) != generation:
+    if request_generation() != generation:
         raise RuntimeError("Agent Token 已在请求期间变更，请重试")
 
 

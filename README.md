@@ -10,15 +10,16 @@ MCP 可读取完整持仓、交易流水、云端实时同步主数据和截图�
 
 ## 前置条件
 
-- **Python 3.10+**
 - 花花日记账号已开通 PRO。
 - 在 App「小窝 / 设置 → Agent 访问令牌」生成新的 Agent Token。
-- Token 只显示一次，配置为环境变量 `HUAHUA_AGENT_TOKEN`。
+- Token 只显示一次；远程模式填入客户端 Auth Token，本地模式配置为环境变量 `HUAHUA_AGENT_TOKEN`。
+- 只有本地 stdio/CLI 模式需要 **Python 3.10+**；手机远程模式不需要 Python。
 
 官方 API 默认地址：`https://api.huahuadaily.cn`，可通过 `HUAHUA_API_BASE` 覆盖。
 
 MCP 启动时会在后台读取公开仓库中的版本声明，不延迟协议初始化；标准 MCP
-`instructions` 会要求 Agent 在每个会话首次使用前调用 `get_tool_manifest()` 读取结果。
+`instructions` 会要求 Agent 仅在首次接入、配置变更或排障时调用 `get_tool_manifest()`，
+普通会话不重复调用。
 首次查询最多等待 2 秒，成功结果在当前进程缓存 6 小时，失败结果 15 分钟后重试。
 检查失败只返回 `updateCheck.status=unavailable`，不会阻断其他工具；发现新版时返回
 `updateAvailable=true` 和分安装方式的更新步骤。该机制只提示，不会自行安装或覆盖
@@ -26,7 +27,29 @@ MCP 启动时会在后台读取公开仓库中的版本声明，不延迟协议�
 
 ## 安装方式
 
-### 方式一：uvx（推荐）
+### 方式一：官方远程 MCP（手机或无 Python 环境）
+
+支持第三方 MCP URL 的客户端可直接连接，无需在手机安装 Python：
+
+```text
+名称：花花日记
+服务器 URL：https://mcp.huahuadaily.cn/mcp
+Auth Token：Bearer 你的花花日记 Agent Token
+```
+
+`Bearer ` 前缀必须保留。每位用户填写自己的 Token；服务端按请求验证并转发，
+不配置或保存某个固定用户 Token。远程端使用 Streamable HTTP；客户端把它统称为
+HTTP/SSE 不影响连接，但是否自动加载 MCP Prompts 由客户端决定。
+
+普通问题直接依靠工具描述调用。复杂任务可调用
+`get_skill_context(topic="portfolio")`、`date-safety`、`quant` 等单一主题；
+不要默认加载 `full`。支持 MCP Prompts 的客户端也可显式选择
+`huahua_daily_expert` 获取完整上下文。
+
+官方远程入口当前使用 `full` 工具面。若自行部署，可用
+`HUAHUA_MCP_PROFILE=core` 减少工具 schema，或使用 `full` 暴露全部能力。
+
+### 方式二：uvx（推荐的本地 stdio 模式）
 
 [uv](https://docs.astral.sh/uv/) 是快速的 Python 包管理器，`uvx` 可直接运行 Python 工具，无需手动安装依赖。
 
@@ -61,7 +84,7 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 }
 ```
 
-### 方式二：pip 安装
+### 方式三：pip 安装
 
 如果不想安装 uv，可以用 pip 全局安装：
 
@@ -84,7 +107,7 @@ pip install git+https://github.com/baiye1997/HuaHuaDailyMCP
 }
 ```
 
-### 方式三：本地运行
+### 方式四：本地运行
 
 ```bash
 # 克隆仓库
@@ -147,6 +170,12 @@ CLI 只负责文件、完整导出和诊断；普通持仓、基金、市场、�
 ```
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
+
+### 版本 4.1.6 变更
+
+- 新增 Zeabur Streamable HTTP 部署入口，手机端以自己的花花 Agent Token 作为 Bearer Token 接入。
+- 远程请求使用上下文级 Token 转发和缓存代际隔离，不在 MCP 服务端保存固定用户 Token。
+- 远程服务同时暴露完整 Skill Prompt 和按主题渐进加载 Tool；普通查询不预加载完整上下文，兼容不会自动注入 MCP Prompts 的客户端并降低额度消耗。
 
 ### 版本 4.1.5 变更
 

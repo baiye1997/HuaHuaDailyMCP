@@ -1,5 +1,6 @@
 """Capability manifest for the public MCP surface."""
 
+import os
 from typing import Any
 
 from .tool_registry import (
@@ -49,9 +50,12 @@ def build_tool_manifest(
     if profile not in {CORE_PROFILE, FULL_PROFILE}:
         profile = None
     active_profile = resolve_profile() if profile is None else profile
+    remote = os.environ.get("HUAHUA_MCP_REMOTE", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     return {
         "name": "huahua-daily",
-        "transport": "stdio",
+        "transport": "streamable-http" if remote else "stdio",
         "profile": active_profile,
         "runtime": {
             "version": __version__,
@@ -62,10 +66,17 @@ def build_tool_manifest(
                 "updateAvailable": None,
             },
         },
-        "auth": {
-            "primary_env": "HUAHUA_AGENT_TOKEN",
-            "header": "Authorization: AgentToken <token>",
-        },
+        "auth": (
+            {
+                "requestHeader": "Authorization: Bearer <Agent Token>",
+                "tokenStorage": "request_context_only",
+            }
+            if remote
+            else {
+                "primary_env": "HUAHUA_AGENT_TOKEN",
+                "header": "Authorization: AgentToken <token>",
+            }
+        ),
         "api_base": official_api,
         "backendCompatibility": backend_compatibility or {
             "status": "not_checked",

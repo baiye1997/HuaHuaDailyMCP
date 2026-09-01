@@ -26,6 +26,7 @@ from huahua_mcp_runtime.client import (  # noqa: E402,F401 -- compatibility faca
     post as _post,
     post_files as _post_files,
     put as _put,
+    request_generation as _request_generation,
     require_token as _require_token,
     session as _session,
     url as _url,
@@ -81,7 +82,7 @@ from huahua_mcp_runtime.tool_registry import TOOL_NAMES as _TOOL_NAMES  # noqa: 
 from huahua_mcp_runtime.tool_registry import register_tools  # noqa: E402
 
 MCP_INSTRUCTIONS = (
-    "每个会话首次使用 HuahuaDaily 前先调用 get_tool_manifest。"
+    "仅在首次接入、配置变更或排障时调用 get_tool_manifest；普通会话无需重复。"
     "若 runtime.updateCheck.updateAvailable=true，先告知用户当前版本、最新版本和更新步骤；"
     "不要自行安装或覆盖用户环境。"
 )
