@@ -127,7 +127,12 @@ async def get_batch_fund_nav_history(
     end_date: str = "",
     order: str = "asc",
 ) -> dict:
-    """一次获取最多 20 只基金的服务端官方历史净值；只读数据库，单只缺失不会让整批失败。"""
+    """一次获取最多 20 只基金的官方 D 日净值数据库快照。
+
+    freshnessMode=unchecked_db_snapshot 表示未核验当前公布进度；complete 只表示
+    请求区间的边界覆盖，不得用它证明“已经更新到最新”。当前量化分析应使用
+    get_batch_fund_quant_metrics，由后端核验新鲜度并按需补数。
+    """
     _require_token()
     validated = list(dict.fromkeys(_validate_fund_code(code) for code in codes))
     if not validated or len(validated) > 20:
@@ -147,7 +152,11 @@ async def get_portfolio_nav_history(
     benchmark_code: Optional[QuantBenchmarkCode] = "000300",
     group_id: str = "",
 ) -> dict:
-    """获取真实组合的每日收益、单位净值、累计收益和回撤曲线。当前区间必须检查 complete 与 navFreshness。"""
+    """获取真实组合的每日收益、单位净值、累计收益和回撤曲线。
+
+    当前区间必须检查 complete 与 navFreshness；navFreshness.retryAfterMs 存在时
+    按该间隔有界重试，最多 3 次，仍不完整则不得给出当前量化结论。
+    """
     _require_token()
     if not end_date:
         end_date = _beijing_date_string()
@@ -192,7 +201,12 @@ async def get_quant_strategy_context(
     benchmark_code: QuantBenchmarkCode = "000300",
     view: Literal["compact", "full"] = "compact",
 ) -> dict:
-    """综合投资分析的首选单调用。compact 一次返回持仓、市场、基金指标、执行窗口、数据质量与分析就绪状态；不要再串行重复取数。"""
+    """综合投资分析的首选单调用。
+
+    compact 一次返回持仓、市场、基金指标、执行窗口、数据质量与分析就绪状态；
+    不要再串行重复取数。若 dataQuality.fundOfficialNavFreshness.retryAfterMs 存在，
+    按该间隔有界重试，最多 3 次。
+    """
     _require_token()
     if not as_of_date:
         as_of_date = _beijing_date_string()

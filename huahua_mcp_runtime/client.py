@@ -29,9 +29,6 @@ PORTFOLIO_TTL = 30
 download_lock: Optional[asyncio.Lock] = None
 download_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
-estimate_cache: dict = {}
-ESTIMATE_TTL = 60
-
 
 def get_client() -> httpx.AsyncClient:
     global http_client
@@ -64,7 +61,6 @@ def clear_session_caches() -> None:
     portfolio_cache["data"] = None
     portfolio_cache["ts"] = 0.0
     portfolio_cache["generation"] = -1
-    estimate_cache.clear()
 
 
 def bind_request_token(token: str) -> Token:

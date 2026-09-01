@@ -99,10 +99,22 @@ _REMOTE_TOOL_DESCRIPTIONS = {
     ),
     "get_fund_quant_metrics": (
         "按需查询单只基金 technical、momentum、risk 或 full 量化视图；不要无条件使用 full。"
+        "必须检查 complete、historyFreshness 和 current.status；若 retryAfterMs 存在，按该间隔"
+        "有界重取，最多 3 次，仍不完整则明确说明补数尚未完成。"
     ),
     "get_batch_fund_quant_metrics": (
         "批量查询基金量化视图；优先一次批量调用，不要逐只并发。technical/momentum/risk "
-        "最多 50 只，full 最多 10 只，并检查完整度与历史新鲜度。"
+        "最多 50 只，full 最多 10 只。必须检查 complete、staleCodes、missingCodes、"
+        "unverifiedCodes、refreshingCodes；若 retryAfterMs 存在，按该间隔有界重取，最多 3 次。"
+    ),
+    "get_batch_fund_nav_history": (
+        "批量读取最多 20 只基金的官方 D 日净值数据库快照。freshnessMode="
+        "unchecked_db_snapshot 表示未核验当前公布进度；complete 只代表所请求区间的边界覆盖，"
+        "不得据此声称数据已更新到最新。当前量化分析应改用 get_batch_fund_quant_metrics。"
+    ),
+    "get_portfolio_nav_history": (
+        "读取组合收益、净值与回撤。当前日期区间必须检查 complete 和 navFreshness；若其中"
+        "retryAfterMs 存在，按该间隔有界重取，最多 3 次，仍不完整则禁止给出当前量化结论。"
     ),
     "get_night_estimate": (
         "查询最多 30 只 QDII 的物化夜盘估值；检查阶段、完整度、freshness 与 FX 状态，"
@@ -111,7 +123,16 @@ _REMOTE_TOOL_DESCRIPTIONS = {
     "get_quant_strategy_context": (
         "综合投资分析的首选单调用：一次返回持仓、市场、基金指标、执行窗口、数据质量与"
         "readyForAnalysis。默认 view='compact'；先检查 blockingReasons，只有缺少必要证据才用 full，"
-        "不要再串行调用 get_records、get_overview 和逐基金量化工具重复取数。"
+        "不要再串行调用 get_records、get_overview 和逐基金量化工具重复取数。检查 dataQuality；"
+        "若 fundOfficialNavFreshness.retryAfterMs 存在，按该间隔有界重取，最多 3 次。"
+    ),
+    "get_index_metrics": (
+        "查询指数服务端量化指标。必须检查 historyFreshness、historyFreshnessBasis 与排名覆盖；"
+        "新鲜度不可证明或历史过期时不得把指标描述为当前结论。"
+    ),
+    "get_sector_metrics": (
+        "查询行业/主题 ETF 代理量化指标。必须检查报价与历史新鲜度及 historyFreshnessBasis；"
+        "ETF 只代表板块代理，不代表底层指数或成分股完整覆盖。"
     ),
 }
 
@@ -137,6 +158,9 @@ mcp._mcp_server.instructions = (
     "优先根据工具名称、描述和参数直接调用。综合投资分析首选 "
     "get_quant_strategy_context(view='compact') 一次取齐，不要重复串行取数。复杂任务才调用 "
     "get_skill_context 按需加载一个主题；不要预加载 full，也不要假设客户端自动注入 Prompt。"
+    "凡用户问当前、最新、刚刷新、刚修改或是否已生效，必须在当前轮重新调用相应工具，"
+    "不得复用更早轮次的结果。响应含 retryAfterMs 且仍 incomplete/stale/computing 时，"
+    "按该间隔有界重取，最多 3 次；仍未完成则如实说明。"
 )
 
 

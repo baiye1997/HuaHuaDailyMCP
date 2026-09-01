@@ -63,9 +63,8 @@ async def get_item_estimate(
     """
     批量获取项目今日实时估算净值（最多 50 个）。
     适合查询"现在涨了多少""今天净值多少"等日常行情问题，不会附带量化计算。
-    可用的当前新鲜帧在同一 session 内缓存 60 秒，与 get_records
-    共享缓存。reset/unavailable/cache-only miss 或 stale 帧不写入该缓存，
-    避免遮蔽后续物化恢复。
+    同一时刻的重叠请求会合并为一次后端读取，但不会跨调用缓存完整估值帧，
+    避免后台基金调优后继续返回旧板块、确认天数或估算路由。
     支持新版后端多行情源：default_data_source_mode / data_source_mode_by_code。
     返回 requestedCodes、missingCodes、invalidCodes、unavailableCodes、timeoutCodes、
     staleCodes、decisionUnavailableCodes、partialCodes、complete 和 evidenceComplete。
@@ -448,7 +447,8 @@ async def get_fund_quant_metrics(
     默认使用最新官方净值；如已通过 get_item_estimate 取得盘中估算值，可传
     technical_value 和 value_basis="live_estimate"，避免 Agent 拉取净值历史重复计算。
     必须检查 historyFreshness/historyExpectedAsOf、metrics.complete 与 current.status；
-    stale/missing/unknown 会 fail-closed，并在可行时后台刷新。
+    stale/missing/unknown 会 fail-closed，并在可行时后台刷新。顶层 retryAfterMs 存在时，
+    按该间隔有界重试，最多 3 次；仍不完整则说明补数未完成。
     可精确关联境内指数时，technical.current.indexValuation 返回指数 PE 与历史分位；
     peBasis=live_index_price_estimate 表示 PE 按今日指数点位估算，officialPeAsOf 是官方 PE 基准日，
     peBasis=official_daily 表示直接使用 dataAsOf 当日官方 PE；estimateStale=true 表示正在后台刷新、
@@ -517,7 +517,7 @@ async def get_batch_fund_quant_metrics(
     251 点窗口检查 item.metrics.complete，full 检查 item.official.metrics.complete；还必须检查
     staleCodes、unverifiedCodes、refreshingCodes 与 item.historyFreshness。历史统计检查
     item.current.status。过期历史会 fail-closed 为 complete=false/computing，并后台刷新；
-    computing 可按 retryAfterMs 稍后重试，
+    顶层或 current 的 retryAfterMs 存在时可按该间隔有界重试，最多 3 次；
     insufficient_history / insufficient_samples 是当前数据集下的终态。
 
     Args:

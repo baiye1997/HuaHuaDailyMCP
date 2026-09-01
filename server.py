@@ -11,12 +11,10 @@ if _SERVER_DIR not in sys.path:
     sys.path.insert(0, _SERVER_DIR)
 
 from huahua_mcp_runtime.client import (  # noqa: E402,F401 -- compatibility facade
-    ESTIMATE_TTL as _ESTIMATE_TTL,
     OFFICIAL_API as _OFFICIAL_API,
     PORTFOLIO_TTL as _PORTFOLIO_TTL,
     clear_session_caches as _clear_session_caches,
     delete as _delete,
-    estimate_cache as _estimate_cache,
     get as _get,
     get_client as _get_client,
     get_download_lock as _get_download_lock,

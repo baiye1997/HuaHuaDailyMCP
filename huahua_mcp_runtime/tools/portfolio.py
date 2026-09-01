@@ -248,7 +248,7 @@ async def get_records(include_transactions: bool = False) -> dict:
         if fund.get("isWatchlist") is True
     }
 
-    # 3. 并行批量获取今日估算数值（共享 60s 缓存）。
+    # 3. 并行批量获取今日估算数值；仅合并同一时刻的重叠请求。
     # 与 App 刷新口径一致：持仓和可见观察列（非送养）都请求盘中估算，
     # 送养隐藏项不请求，避免无谓的开销。
     estimate_codes = [

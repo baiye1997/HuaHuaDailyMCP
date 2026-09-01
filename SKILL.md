@@ -1,6 +1,6 @@
 ---
 name: huahua-daily
-version: 4.1.6
+version: 4.1.7
 description: 查询和分析花花日记中的基金持仓、行情、交易、量化与社区数据，并创建需要用户在 App 内确认的交易或批量导入请求。输入是本地图片、完整导出或大型文件时使用配套 huahua CLI。
 ---
 
@@ -80,6 +80,8 @@ manifest 报告版本可更新时只提示用户，不自行安装或覆盖环�
 
 ## 回答要求
 
+- 用户问“当前、最新、刚刷新、刚修改、是否已生效”时，必须在当前轮重新调用对应工具，不能复用此前轮次的工具结果。
+- 数据响应含 `retryAfterMs` 且仍为 incomplete、stale 或 computing 时，按该间隔有界重取，最多 3 次；仍未完成则明确说明补数尚未完成，不循环等待。
 - 区分官方净值、盘中估算和夜盘参考，不把估算描述成已确认收益。
 - 涉及组合结论时检查返回中的 freshness、complete、readyForAnalysis 和 blockingReasons。
 - 基金代码或名称存在歧义时轻确认，不猜测。

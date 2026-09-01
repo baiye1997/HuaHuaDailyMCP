@@ -5,7 +5,6 @@ import re
 import time
 from typing import Any, Optional
 
-from .tools.fund_estimate_helpers import estimate_frame_available
 from .validation import DATA_SOURCE_PREFERENCE_EPOCH
 
 
@@ -15,47 +14,6 @@ _estimate_inflight_lock: Optional[asyncio.Lock] = None
 _estimate_inflight_loop: Optional[asyncio.AbstractEventLoop] = None
 _estimate_inflight: dict[tuple[str, ...], dict[str, Any]] = {}
 _MAX_ESTIMATE_INFLIGHT = 100
-
-
-def _estimate_item_is_cacheable(item: object) -> bool:
-    """Keep only usable current frames in the MCP's short process cache."""
-
-    if not isinstance(item, dict) or not item:
-        return False
-    source = str(item.get("source") or "").strip().lower()
-    status = str(item.get("status") or "").strip().lower()
-    if (
-        not source
-        or source in {"reset", "timeout", "unavailable", "cache_only_miss"}
-        or status == "unavailable"
-    ):
-        return False
-    decision = item.get("estimateDecision")
-    if isinstance(decision, dict):
-        decision_status = str(decision.get("status") or "").strip().lower()
-        decision_route = str(decision.get("routeId") or "").strip().lower()
-        decision_reason = str(decision.get("reason") or "").strip().lower()
-        if (
-            decision_status == "unavailable"
-            or decision_route == "cache_only_miss"
-            or decision_reason == "cache_only_miss"
-        ):
-            return False
-    freshness = str(
-        item.get("freshness")
-        or item.get("estimateFreshness")
-        or ""
-    ).strip().lower()
-    if (
-        item.get("stale") is True
-        or item.get("estimateStale") is True
-        or item.get("frameRefreshing") is True
-        or freshness in {"stale", "unavailable"}
-        or str(item.get("fallbackReason") or "").strip().lower()
-        == "frame_refreshing"
-    ):
-        return False
-    return estimate_frame_available(item)
 
 
 def _get_estimate_semaphore() -> asyncio.Semaphore:
@@ -87,7 +45,6 @@ async def fetch_estimates(
     codes = list(dict.fromkeys(codes))
     normalize_mode = runtime["_normalize_data_source_mode"]
     validate_code = runtime["_validate_fund_code"]
-    estimate_cache = runtime["_estimate_cache"]
     request_generation = runtime["_request_generation"]
     session_generation = request_generation()
     default_mode = normalize_mode(default_data_source_mode)
@@ -100,7 +57,7 @@ async def fetch_estimates(
     def mode_for(code: str) -> str:
         return mode_by_code.get(code, default_mode)
 
-    def cache_key(code: str) -> str:
+    def request_key(code: str) -> str:
         return f"{code}:{mode_for(code)}"
 
     async def fetch_batch(batch: list) -> dict:
@@ -127,7 +84,6 @@ async def fetch_estimates(
             return_exceptions=True,
         )
         fetched: dict = {}
-        cache_ts = time.monotonic()
         for response in responses:
             if isinstance(response, Exception):
                 continue
@@ -143,18 +99,6 @@ async def fetch_estimates(
                 if not code_key:
                     continue
                 fetched[code_key] = item
-                if (
-                    _estimate_item_is_cacheable(item)
-                    and request_generation() == session_generation
-                ):
-                    mode = normalize_mode(
-                        item.get("dataSourceMode") or mode_for(code_key)
-                    )
-                    estimate_cache[f"{code_key}:{mode}"] = {
-                        "data": item,
-                        "ts": cache_ts,
-                        "generation": session_generation,
-                    }
         return fetched
 
     async def run_inflight(
@@ -174,35 +118,10 @@ async def fetch_estimates(
     inflight_key: tuple[str, ...] = ()
     task: Optional[asyncio.Task] = None
     async with _get_estimate_inflight_lock():
-        now = time.monotonic()
-        miss_codes: list = []
-        for code in codes:
-            entry = estimate_cache.get(cache_key(code))
-            if (
-                entry
-                and entry.get("generation") == session_generation
-                and now - entry["ts"] < runtime["_ESTIMATE_TTL"]
-            ):
-                result[code] = entry["data"]
-            else:
-                miss_codes.append(code)
-        if not miss_codes:
-            return result
-        if len(estimate_cache) > 500:
-            # 先驱逐过期条目，保留仍新鲜的帧；若全部新鲜仍超限（极端积压），
-            # 兜底全清避免每次请求都重复遍历且永远清不掉。
-            cutoff = time.monotonic() - runtime["_ESTIMATE_TTL"]
-            for key in [
-                key
-                for key, entry in estimate_cache.items()
-                if entry.get("ts", 0) < cutoff
-            ]:
-                estimate_cache.pop(key, None)
-            if len(estimate_cache) > 500:
-                estimate_cache.clear()
+        miss_codes = codes
         inflight_key = (
             f"generation:{session_generation}",
-            *(sorted(cache_key(code) for code in miss_codes)),
+            *(sorted(request_key(code) for code in miss_codes)),
         )
         entry = _estimate_inflight.get(inflight_key)
         if entry is None:
