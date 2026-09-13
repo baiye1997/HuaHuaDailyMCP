@@ -156,7 +156,7 @@ def sort_transactions(transactions: list[dict]) -> list[dict]:
         key=lambda pair: (
             tx_effective_date(pair[1]),
             1 if pair[1].get("type") == "DIVIDEND_CASH" else 0,
-            pair[1].get("dayOrder") if pair[1].get("dayOrder") is not None else 999999,
+            pair[1].get("dayOrder") if pair[1].get("dayOrder") is not None else float("inf"),
             TYPE_ORDER.get(pair[1].get("type", ""), 9),
             pair[0],
         )
