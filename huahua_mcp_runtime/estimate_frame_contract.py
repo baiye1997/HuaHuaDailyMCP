@@ -48,9 +48,11 @@ def estimate_frame_available(item: dict) -> bool:
     ).strip().lower()
     if (
         decision_status == "unavailable"
-        or item.get("stale") is True
-        or item.get("estimateStale") is True
-        or freshness == "stale"
+        or (source != "official_published" and (
+            item.get("stale") is True
+            or item.get("estimateStale") is True
+            or freshness == "stale"
+        ))
     ):
         return False
 
