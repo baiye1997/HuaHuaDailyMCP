@@ -325,8 +325,9 @@ async def get_instrument_quotes(codes: list[str]) -> dict:
 
 async def get_instrument_timeline(code: str, range: str = "1d") -> dict:
     """
-    获取单个指数/ETF 的分时走势（5 分钟 K 线）。
-    适合了解今日盘中走势。
+    获取单个指数/ETF 的分时走势，可包含同一交易会话的最新真实报价点。
+    点的 time 保留实际观察时间，不保证等间隔；latestQuote 与尾点配对。
+    latestQuote.stale 或 freshness=stale 表示保留的旧帧，不能当作当前实时行情。
 
     Args:
         code: 目录中的标准代码，如 "000300"、"399006" 或 "KS11"
