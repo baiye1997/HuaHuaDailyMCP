@@ -199,8 +199,12 @@ async def get_night_estimate(codes: list[str], force: bool = False, view: str = 
     最多 30 个代码；超过上限或传入未知 view 会直接报错，不会静默截断。
     force 仅为旧客户端兼容参数，服务端不允许请求穿透共享帧缓存或触发 Yahoo 抓取。
 
-    forecast 必须检查 currentComplete、warming、frameRefreshing、staleCodes 和
-    pollerPendingCodes；availability=available/status=ready 不代表所有数据是当前帧。
+    与 App 同口径，逐只以 usable 判断涨幅可用性（ready 且有有限涨幅）。
+    currentComplete、warming、frameRefreshing、staleCodes 是整批时效审计，不得
+    据此否决已经 usable 的单只涨幅；保留 quoteAsOf/phase，说明数据时间与刷新状态。
+    estimatedNav=null 是净值尚未公布的正常情况，不影响涨幅可用性。
+    涨幅单位为百分点：0.0582 表示 +0.0582%，不得乘以 100；coverage 为持仓披露权重，
+    不是行情拉取成功率。夜盘读取不触发预热，不要因刷新中立即重复请求同一缓存帧。
     item.fxStatus=omitted 表示本地资产涨幅仍可用、仅缺少汇率腿，不是整只基金无行情；
     此时 item 仍可 ready，但 evidenceComplete=false。QDII 持仓模型存在时，item.calibration
     统一返回 applied/reason/weight/modelVersion；夜盘只读取已验证模型，不在请求中训练。

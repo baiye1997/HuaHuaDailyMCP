@@ -28,7 +28,8 @@ def _has_finite_night_change(item: dict) -> bool:
 def _is_ready_night_item(item: dict) -> bool:
     result_state = item.get("resultState")
     return bool(
-        item.get("status") == "ready"
+        item.get("usable") is not False
+        and item.get("status") == "ready"
         and result_state in {None, "ready"}
         and _has_finite_night_change(item)
     )
@@ -46,6 +47,10 @@ def normalize_night_response(payload: object, requested_view: str) -> dict:
         if not isinstance(raw_item, dict):
             continue
         item = dict(raw_item)
+        if not item.get("freshness") and result.get("freshness"):
+            item["freshness"] = result["freshness"]
+        item["usable"] = _is_ready_night_item(item)
+        item["changePercentUnit"] = "percentage_points"
         fx_status = _normalized_fx_status(item)
         calibration = _normalized_calibration_evidence(item)
         if fx_status is not None:
@@ -144,7 +149,7 @@ def normalize_night_response(payload: object, requested_view: str) -> dict:
         _safe_count(meta.get("weakCoverageCount"), 0),
         sum(1 for item in ready_items if item.get("weakCoverage") is True),
     )
-    frame_refreshing = meta.get("frameRefreshing") is True
+    frame_refreshing = meta.get("frameRefreshing") is True or result.get("frameRefreshing") is True
     truncated = meta.get("truncated") is True
     complete = bool(
         requested_count > 0

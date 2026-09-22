@@ -171,6 +171,11 @@ CLI 只负责文件、完整导出和诊断；普通持仓、基金、市场、�
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.1.11 变更
+
+- 夜盘逐只返回 `usable`，与 App 的 ready 涨幅口径对齐；整批刷新、旧帧、汇率缺失和 NAV 为空不再被解释为整只不可用。时间、阶段和质量证据继续保留。
+- 涨幅明确使用百分点（0.0582 = +0.0582%），持仓覆盖为披露权重；夜盘请求只读共享帧，不触发预热。
+
 ### 版本 4.1.10 变更
 
 - 明确分时走势可包含最新报价点，并保留实际观察时间；旧帧状态继续原样传递，避免误读为实时行情。
@@ -509,7 +514,7 @@ clawhub install huahua-daily
 - `get_batch_fund_fees(codes)`：批量获取费率/申购状态/限购规则，最多 50 只；检查 `complete` 和 `missingCodes`。
 - `get_fund_period_rank(code)`
 - `get_batch_fund_period_ranks(codes)`：批量获取多只基金排名，最多 50 只；结果位于 `data`，检查 `complete` 和 `missingCodes`。
-- `get_night_estimate(codes, force=false, view="forecast")`：最多 30 只，读取 QDII 夜盘最近已物化帧（需会员）。`force` 是废弃兼容参数，true/false 都不会穿透共享缓存或触发上游抓取。forecast 必须检查 `currentComplete`、`warming`、`frameRefreshing`、`pollerPendingCodes`、`timeoutPendingCodes` 和 `staleCodes`；`item.fxStatus=omitted` 时本地涨幅仍可 ready/current，但 `evidenceComplete=false`；持仓模型帧的 `item.calibration` 统一给出 `applied/reason/weight/modelVersion`，夜盘只读模型、不训练。last_close 的 stale 是历史收盘快照的正常语义，检查 `complete`，其 `currentComplete=false`。`actual_session_date` 是海外行情交易日，`date` 是北京时间响应日，item 的 `navRequiredDate/lastNavDate` 才是净值 D 日，均不是收益 G 日。
+- `get_night_estimate(codes, force=false, view="forecast")`：最多 30 只，读取 QDII 夜盘最近已物化帧（需会员）。`force` 是废弃兼容参数，true/false 都不会穿透共享缓存或触发上游抓取。forecast 逐只按 `usable` 判断涨幅可用性（ready + 有限涨幅）；`estimatedNav=null` 不阻断。`currentComplete`、`warming`、`frameRefreshing` 和 `staleCodes` 是时效审计，保留时间说明，不据此否决 usable 单只。pending 只影响对应基金。涨幅单位为百分点（0.0582 = +0.0582%），coverage 是披露权重；`item.fxStatus=omitted` 时本地涨幅仍可 ready/current，但 `evidenceComplete=false`；持仓模型帧的 `item.calibration` 统一给出 `applied/reason/weight/modelVersion`，夜盘只读模型、不训练。last_close 的 stale 是历史收盘快照的正常语义，检查 `complete`，其 `currentComplete=false`。`actual_session_date` 是海外行情交易日，`date` 是北京时间响应日，item 的 `navRequiredDate/lastNavDate` 才是净值 D 日，均不是收益 G 日。
 - `get_night_watchlist()`：读取 App 夜盘估值页实际生效的基金列表；未自定义时 `codes` 已包含默认池，`configuredCodes=[]`、`source=default`，通常作为 `get_night_estimate` 的前置工具。
 - `get_purchase_limit_watchlist()`：按 App 迁移规则返回实际生效的限购观察列表；`lastSnapshot` 是最近检查结果，`snapshot` 是兼容别名，可配合 `get_fund_fees` 检查当前申购状态和限购额度。
 - `get_status()`
