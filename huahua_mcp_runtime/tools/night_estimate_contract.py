@@ -51,6 +51,9 @@ def normalize_night_response(payload: object, requested_view: str) -> dict:
             item["freshness"] = result["freshness"]
         item["usable"] = _is_ready_night_item(item)
         item["changePercentUnit"] = "percentage_points"
+        item["view"] = result.get("view") or requested_view
+        item["forecastFlagMeaning"] = "synthetic_overnight_or_holiday_projection"
+        item["estimateMode"] = item.get("estimateMode") or (result.get("market") or {}).get("phase")
         fx_status = _normalized_fx_status(item)
         calibration = _normalized_calibration_evidence(item)
         if fx_status is not None:

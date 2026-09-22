@@ -199,6 +199,7 @@ async def get_night_estimate(codes: list[str], force: bool = False, view: str = 
     最多 30 个代码；超过上限或传入未知 view 会直接报错，不会静默截断。
     force 仅为旧客户端兼容参数，服务端不允许请求穿透共享帧缓存或触发 Yahoo 抓取。
 
+    item.view 是请求视图，estimateMode 是行情阶段；旧 forecast 标记只表示隔夜/假日合成预测，盘前为 false 并非拿错视图。
     与 App 同口径，逐只以 usable 判断涨幅可用性（ready 且有有限涨幅）。
     currentComplete、warming、frameRefreshing、staleCodes 是整批时效审计，不得
     据此否决已经 usable 的单只涨幅；保留 quoteAsOf/phase，说明数据时间与刷新状态。
