@@ -171,6 +171,12 @@ CLI 只负责文件、完整导出和诊断；普通持仓、基金、市场、�
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.1.13 变更
+
+- 远程认证使用不返回个人资料的 `/api/auth/agent-token/validate`，支持不含 `profile:read` 的细粒度 Token；各工具仍按后端 scope 和会员规则校验。
+- 个人报告所需权限统一为 `messages:write`，默认 `agent:full` Token 已包含该权限。
+- 部署时先更新后端，再更新远程 MCP；旧后端缺少新接口时，远程入口返回 503，不回退读取个人资料。
+
 ### 版本 4.1.12 变更
 
 - 夜盘项目显式区分 view、estimateMode 与旧 forecast 标记，保留计算证据与质量说明。

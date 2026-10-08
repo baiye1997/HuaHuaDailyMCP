@@ -198,16 +198,16 @@ async def _validate_agent_token(token: str) -> bool | None:
     try:
         try:
             response = await get_client().get(
-                f"{OFFICIAL_API}/api/auth/me",
+                f"{OFFICIAL_API}/api/auth/agent-token/validate",
                 headers={"Authorization": f"AgentToken {token}"},
             )
         except httpx.RequestError:
             return None
     finally:
         _auth_validation_semaphore.release()
-    if response.status_code not in {200, 401, 403}:
+    if response.status_code not in {204, 401, 403}:
         return None
-    valid = response.status_code == 200
+    valid = response.status_code == 204
     ttl = _AUTH_CACHE_TTL if valid else _AUTH_FAILURE_TTL
     async with _auth_cache_lock:
         if len(_auth_cache) >= _AUTH_CACHE_LIMIT:

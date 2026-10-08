@@ -6,6 +6,7 @@ from typing import Any
 from .tool_registry import (
     CORE_PROFILE,
     FULL_PROFILE,
+    TOOL_SPEC_BY_NAME,
     active_tool_specs,
     capabilities_for_profile,
     resolve_profile,
@@ -103,7 +104,7 @@ def build_tool_manifest(
             "non_idempotent_toggle_tools": tools_with_effect(active_profile, "non_idempotent_toggle"),
             "personal_report_write": True,
             "personal_report_flow": "submit_personal_strategy_report 只写入当前 Agent Token 所属用户的报告中心；不能指定 user_id 或广播。",
-            "personal_report_required_scope": "agent:full（默认 Token 已包含）",
+            "personal_report_required_scope": TOOL_SPEC_BY_NAME["submit_personal_strategy_report"].scope,
             "quant_snapshot_write": True,
             "quant_snapshot_write_boundary": "仅归档 token 所属用户的策略观察；真实持仓、组合版本和内容哈希由服务端捕获，不保存建议金额。",
             "quant_data_basis": "单基金指标使用官方净值 D 日；组合回放使用 linked_daily_return_v1 的 G 日归属；QDII 夜盘仅作执行参考；回测零费率；不宣称严格 point-in-time。",
