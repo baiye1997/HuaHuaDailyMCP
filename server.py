@@ -40,6 +40,7 @@ from huahua_mcp_runtime.portfolio_math import (  # noqa: E402,F401 -- compatibil
     r4 as _r4,
     r6 as _r6,
     ratio_pct as _ratio_pct,
+    parse_percent as _parse_percent,
     resolve_amount as _resolve_amount,
     resolve_buy_shares as _resolve_buy_shares,
     resolve_sell_shares as _resolve_sell_shares,

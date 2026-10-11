@@ -3,6 +3,27 @@
 from __future__ import annotations
 
 import math
+import re
+
+
+_PERCENT_VALUE_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$", re.IGNORECASE)
+
+
+def _parse_percent(value) -> float:
+    if isinstance(value, bool) or value is None:
+        return float("nan")
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else float("nan")
+    if not isinstance(value, str):
+        return float("nan")
+    normalized = value.strip()
+    if normalized.endswith("%"):
+        normalized = normalized[:-1].strip()
+    if not normalized or not _PERCENT_VALUE_PATTERN.fullmatch(normalized):
+        return float("nan")
+    parsed = float(normalized)
+    return parsed if math.isfinite(parsed) else float("nan")
 
 
 CURRENT_ESTIMATE_SOURCES = frozenset({
@@ -69,7 +90,7 @@ def estimate_frame_available(item: dict) -> bool:
     change_percent = item.get("estimatedChangePercent")
     if change_percent is None:
         change_percent = item.get("gszzl")
-    parsed_change_percent = to_float(change_percent)
+    parsed_change_percent = _parse_percent(change_percent)
     return (
         math.isfinite(previous_nav)
         and previous_nav > 0

@@ -5,6 +5,8 @@ import math
 import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from .portfolio_math import EFFECTIVE_ZERO_SHARES
+
 CONFIRMED_EMPTY_PORTFOLIO_KEYS = {
     "funds", "archivedLedger", "deletedFundsMeta", "dismissedDividendKeys",
     "userPreferences", "groups", "watchlistGroups", "globalTags", "tagDisplayCount",
@@ -174,7 +176,7 @@ def _recalculate_fund_state(transactions: list[dict]) -> dict[str, float]:
                 realized_profit = _round(realized_profit + transaction_profit, 2)
                 holding_shares = _round(holding_shares - sell_shares, 6)
                 total_input_principal = _round(total_input_principal - sold_principal, 2)
-                if holding_shares <= 0.001:
+                if holding_shares <= EFFECTIVE_ZERO_SHARES:
                     holding_shares = 0.0
                     total_input_principal = 0.0
         elif transaction_type == "DIVIDEND_CASH":

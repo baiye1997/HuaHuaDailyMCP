@@ -1,6 +1,7 @@
 """Pure portfolio calculations shared by MCP portfolio tools."""
 
 import math
+import re
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
@@ -24,6 +25,26 @@ def normalize_observed_day(value, *, today: str | None = None) -> str:
 
 
 _MISSING = object()
+EFFECTIVE_ZERO_SHARES = 0.001
+NAV_CHANGE_MISMATCH_TOLERANCE_PERCENT = 0.05
+_PERCENT_VALUE_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$", re.IGNORECASE)
+
+
+def parse_percent(value) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if normalized.endswith("%"):
+        normalized = normalized[:-1].strip()
+    if not normalized or not _PERCENT_VALUE_PATTERN.fullmatch(normalized):
+        return None
+    parsed = float(normalized)
+    return parsed if math.isfinite(parsed) else None
 
 
 def parse_confirm_days(value) -> int | None:
@@ -127,7 +148,7 @@ def ratio_pct(numerator: float, denominator: float) -> Optional[float]:
     if not math.isfinite(numerator) or not math.isfinite(denominator) or denominator <= 0:
         return None
     try:
-        value = (Decimal(repr(numerator)) / Decimal(repr(denominator)) * Decimal("100")).quantize(
+        value = (Decimal(repr(numerator)) * Decimal("100") / Decimal(repr(denominator))).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         return float(value)
@@ -219,7 +240,7 @@ def calc_correction_delta_total(transactions: list[dict]) -> float:
             )
             current_shares = r6(current_shares - sell_shares)
             current_cost_total = r2(current_cost_total - sold_cost)
-            if current_shares <= 0.001:
+            if current_shares <= EFFECTIVE_ZERO_SHARES:
                 current_shares = 0.0
                 current_cost_total = 0.0
         elif transaction_type == "DIVIDEND_REINVEST":
@@ -244,16 +265,13 @@ def calc_correction_delta_total(transactions: list[dict]) -> float:
 def calc_change_profit(shares: float, base_nav: float, change_percent, current_nav) -> float:
     if not math.isfinite(shares) or shares <= 0 or not math.isfinite(base_nav) or base_nav <= 0:
         return 0.0
-    percent = (
-        to_float(str(change_percent).replace("%", ""), float("nan"))
-        if change_percent is not None
-        else float("nan")
-    )
+    percent = parse_percent(change_percent)
+    percent = percent if percent is not None else float("nan")
     nav = to_float(current_nav, float("nan"))
     if math.isfinite(nav) and nav > 0:
         difference = nav - base_nav
-        difference_growth_rate = (difference / base_nav) * 100
-        if not math.isfinite(percent) or abs(difference_growth_rate - percent) <= 0.05:
+        difference_growth_rate = difference * 100 / base_nav
+        if not math.isfinite(percent) or abs(difference_growth_rate - percent) <= NAV_CHANGE_MISMATCH_TOLERANCE_PERCENT:
             return r2(shares * difference)
     if not math.isfinite(percent):
         return 0.0
@@ -264,15 +282,12 @@ def uses_official_change_fallback(base_nav: float, change_percent, current_nav) 
     """Whether the official percentage is a total-return adjustment, not raw NAV movement."""
     if not math.isfinite(base_nav) or base_nav <= 0:
         return False
-    percent = (
-        to_float(str(change_percent).replace("%", ""), float("nan"))
-        if change_percent is not None and not isinstance(change_percent, bool)
-        else float("nan")
-    )
+    parsed_percent = parse_percent(change_percent)
+    percent = parsed_percent if parsed_percent is not None else float("nan")
     nav = to_float(current_nav, float("nan"))
     if not math.isfinite(percent) or not math.isfinite(nav) or nav <= 0:
         return False
-    return abs(((nav - base_nav) / base_nav) * 100 - percent) > 0.05
+    return abs((nav - base_nav) * 100 / base_nav - percent) > NAV_CHANGE_MISMATCH_TOLERANCE_PERCENT
 
 
 def transaction_amount_on_date(transactions: list[dict], transaction_type: str, target_date: str) -> float:

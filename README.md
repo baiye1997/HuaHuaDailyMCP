@@ -171,6 +171,10 @@ CLI 只负责文件、完整导出和诊断；普通持仓、基金、市场、�
 
 `get_tool_manifest()` 返回当前 profile、可用能力清单和覆盖全部活跃工具的 `toolScopes`，Agent 可在调用前区分本地工具、公开接口及精细 Agent Token 权限。
 
+### 版本 4.1.14 变更
+
+- 统一百分比解析、有效零份额和净值变化容差，修复 MCP 组合计算与后端/App 口径漂移；估算帧继续拒绝非法或非有限百分比。
+
 ### 版本 4.1.13 变更
 
 - 远程认证使用不返回个人资料的 `/api/auth/agent-token/validate`，支持不含 `profile:read` 的细粒度 Token；各工具仍按后端 scope 和会员规则校验。
