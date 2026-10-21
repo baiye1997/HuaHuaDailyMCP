@@ -1,6 +1,9 @@
 """Portfolio MCP tool implementations."""
 
+import asyncio
 import json
+
+from ..portfolio_math import resolve_portfolio_display_day
 
 from .binding import RuntimeCallable, bind_runtime
 from . import portfolio_preferences
@@ -214,6 +217,8 @@ async def get_records(include_transactions: bool = False) -> dict:
     - summary.estimateCompleteness: 当前估值帧可用性。complete=false 表示至少一只持仓
       没有可用于当日收益的估值帧；timeoutCount>0 或 staleCount>0 时不得把 0 元
       当成真实零涨跌，过期 last-good 只供审计。
+    - summary.returnAttributionDate 是后端交易日历对应的展示 G 日，只汇总同日收益。
+      同时检查 displayedDayCompleteness；日历缺失、跨日数据或 openingWait 时不是完整零收益。
     - holdings/watchlist 的 estimateDisplayDate 是估算展示日，targetNavDate 与
       latestOfficialNavDate 是净值 D 日；returnAttributionDate 才是收益归属 G 日。
       G 日不可靠时为 null，不能回退成 D 日。
@@ -226,8 +231,14 @@ async def get_records(include_transactions: bool = False) -> dict:
             需要审计交易流水、重算收益或排查数据时设为 true。
     """
     _require_token()
-    # 下载记录并复用缓存。
-    portfolio = await _download_portfolio()
+    # Calendar failure must not discard the portfolio or attribute another day.
+    portfolio, market_status = await asyncio.gather(
+        _download_portfolio(), asyncio.wait_for(_get("/api/market/status"), timeout=2),
+        return_exceptions=True,
+    )
+    if isinstance(portfolio, BaseException):
+        raise portfolio
+    display_day, opening_wait = resolve_portfolio_display_day(market_status)
     funds: list = portfolio.get("funds", [])
     data_updated_at: str = portfolio.get("_meta_updated_at", "")
     data_source: str = portfolio.get("_meta_data_source", "")
@@ -425,20 +436,27 @@ async def get_records(include_transactions: bool = False) -> dict:
     valuation_missing_date_codes = []
     partial_estimated_market_value = 0.0
     estimated_market_value_available_count = 0
+    out_of_date_codes = []
     for f in holdings:
         total_market_value = _r2(total_market_value + f.get("marketValue", 0))
         total_cost = _r2(total_cost + f.get("costTotal", 0))
-        total_today_profit = _r2(total_today_profit + f.get("todayProfit", 0))
-        total_day_base_market_value = _r2(total_day_base_market_value + f.get("dayBaseMarketValue", 0))
+        displayed_day_matches = bool(
+            display_day and not opening_wait and f.get("returnAttributionDate") == display_day
+        )
+        if displayed_day_matches:
+            total_today_profit = _r2(total_today_profit + f.get("todayProfit", 0))
+            total_day_base_market_value = _r2(total_day_base_market_value + f.get("dayBaseMarketValue", 0))
+        elif display_day and f.get("displayedDayAttributable") and f.get("returnAttributionDate") != display_day:
+            out_of_date_codes.append(f.get("code"))
         total_holding_profit = _r2(total_holding_profit + f.get("holdingProfit", 0))
         total_cumulative_profit = _r2(total_cumulative_profit + f.get("totalProfit", 0))
         total_in_transit = _r2(total_in_transit + f.get("inTransitAmount", 0))
         total_invested = _r2(total_invested + f.get("totalInvested", 0))
-        if f.get("displayedDayAttributable"):
+        if f.get("displayedDayAttributable") and displayed_day_matches:
             attributable_count += 1
             if f.get("estimateSource") == "official_published":
                 updated_count += 1
-        elif f.get("estimateSource") == "official_published":
+        elif not f.get("displayedDayAttributable") and f.get("estimateSource") == "official_published":
             pending_attribution_count += 1
         if f.get("estimateAvailable"):
             estimate_available_count += 1
@@ -477,6 +495,8 @@ async def get_records(include_transactions: bool = False) -> dict:
         "watchlist": watchlist,
         "groups": portfolio.get("groups", []),
         "summary": {
+            "returnAttributionDate": display_day or None,
+            "openingWait": opening_wait,
             "totalMarketValue": total_market_value,
             "totalCost": total_cost,
             "todayProfit": total_today_profit,
@@ -497,7 +517,9 @@ async def get_records(include_transactions: bool = False) -> dict:
                 "attributableCount": attributable_count,
                 "updatedCount": updated_count,
                 "pendingAttributionCount": pending_attribution_count,
-                "complete": pending_attribution_count == 0,
+                "outOfDateCodes": out_of_date_codes,
+                "calendarAvailable": bool(display_day),
+                "complete": bool(display_day) and not opening_wait and attributable_count == len(holdings),
             },
             "estimateCompleteness": {
                 "totalCount": len(holdings),
@@ -552,7 +574,7 @@ async def get_records(include_transactions: bool = False) -> dict:
 
 
 async def get_summary() -> dict:
-    """获取精简持仓总览；只问组合汇总时使用，综合投资分析改用 compact 策略上下文。"""
+    """获取精简持仓总览；核对 returnAttributionDate 和 displayedDayCompleteness，不能把不同 G 日相加。综合投资分析改用 compact 策略上下文。"""
     _require_token()
     result = await _runtime_get_records()
     summary = result.get("summary", {})

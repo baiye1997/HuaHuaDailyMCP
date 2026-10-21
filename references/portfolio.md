@@ -16,6 +16,8 @@
 - `timeoutCount`、`staleCount`、`partialCount` 或 unavailable codes 非空时披露不完整。
 - `marketValue` 使用官方净值锚点；`estimatedMarketValue` 是独立估算，不能混为官方市值。
 - 最新 QDII 收益没有可靠 G 日时保持未归属，不回退到 D 日。
+- 汇总收益只包含 `summary.returnAttributionDate` 对应 G 日。逐只基金保留自己的 `returnAttributionDate`，不得把不同日期相加。
+- 必须同时检查 `summary.displayedDayCompleteness`；日历不可用、`outOfDateCodes` 非空或 `openingWait=true` 时，汇总 0 元不代表完整的真实零收益。
 
 ## 数据最小化
 

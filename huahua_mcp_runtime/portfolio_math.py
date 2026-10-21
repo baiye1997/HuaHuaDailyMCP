@@ -24,7 +24,29 @@ def normalize_observed_day(value, *, today: str | None = None) -> str:
     return normalized if normalized <= (today or beijing_date_string()) else ""
 
 
-_MISSING = object()
+def resolve_portfolio_display_day(status: object) -> tuple[str, bool]:
+    """Select the App's display day from server calendar facts, never weekdays."""
+    if not isinstance(status, dict) or not isinstance(status.get("is_trading_day"), bool):
+        return "", False
+    try:
+        clock = datetime.fromisoformat(str(status.get("serverTime") or "").replace("Z", "+00:00"))
+        if clock.tzinfo is None:
+            return "", False
+        clock = clock.astimezone(ZoneInfo("Asia/Shanghai"))
+    except (ValueError, OverflowError):
+        return "", False
+    today = beijing_date_string()
+    if clock.date().isoformat() != today:
+        return "", False
+    minute = clock.hour * 60 + clock.minute
+    trading = status["is_trading_day"]
+    opening_wait = trading and 540 <= minute < 570
+    if trading and minute >= 570:
+        return today, opening_wait
+    day = normalize_observed_day(status.get("previous_trading_date") if trading else status.get("display_date"))
+    return (day if day < today else ""), opening_wait
+
+
 EFFECTIVE_ZERO_SHARES = 0.001
 NAV_CHANGE_MISMATCH_TOLERANCE_PERCENT = 0.05
 _PERCENT_VALUE_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$", re.IGNORECASE)
@@ -48,7 +70,7 @@ def parse_percent(value) -> float | None:
 
 
 def parse_confirm_days(value) -> int | None:
-    """Parse the same integer 1..30 settlement contract used by the App."""
+    """Parse the same integer 1..10 settlement contract used by the App."""
     if isinstance(value, bool) or value is None:
         return None
     try:
@@ -58,66 +80,60 @@ def parse_confirm_days(value) -> int | None:
     if not math.isfinite(number) or not number.is_integer():
         return None
     parsed = int(number)
-    return parsed if 1 <= parsed <= 30 else None
+    return parsed if 1 <= parsed <= 10 else None
 
 
 def _estimate_confirm_days(fund: dict, estimate: dict) -> int | None:
-    candidate = _MISSING
     for source, keys in (
         (estimate, ("confirm_days", "confirmDays")),
         (fund, ("confirmDays", "confirm_days")),
     ):
         for key in keys:
-            if key in source and source[key] is not None:
-                candidate = source[key]
-                break
-        if candidate is not _MISSING:
-            break
-    return None if candidate is _MISSING else parse_confirm_days(candidate)
+            if key in source:
+                # Explicitly unknown live metadata must not revive an old T+1.
+                provenance = source.get("confirm_days_source") or source.get("confirmDaysSource")
+                if provenance not in {"fund_fee_em", "ops_override"}:
+                    return None
+                return parse_confirm_days(source[key])
+    return None
+
+
+def _official_nav_dates(fund: dict, estimate: dict) -> tuple[str, str]:
+    """Keep each publication date attached to the D day that supplied it."""
+    nav_date = normalize_observed_day(
+        estimate.get("last_nav_date") or estimate.get("lastNavDate") or fund.get("lastNavDate"),
+    )
+    for source in (estimate, fund):
+        source_nav_date = normalize_observed_day(source.get("last_nav_date") or source.get("lastNavDate"))
+        if source_nav_date == nav_date and nav_date:
+            publish_date = normalize_observed_day(source.get("last_nav_publish_date") or source.get("lastNavPublishDate"))
+            if publish_date >= nav_date:
+                return nav_date, publish_date
+        pair = source.get("estimate_vs_actual") or source.get("estimateVsActual")
+        if isinstance(pair, dict) and nav_date:
+            paired_nav_date = normalize_observed_day(pair.get("nav_date"))
+            paired_publish_date = normalize_observed_day(pair.get("publish_date"))
+            if paired_nav_date == nav_date and paired_publish_date >= nav_date:
+                return nav_date, paired_publish_date
+    return nav_date, ""
 
 
 def resolve_official_attribution_date(fund: dict, estimate: dict) -> str:
     """Return a reliable G day paired with the latest official D day."""
-    today = beijing_date_string()
-    nav_date = normalize_observed_day(
-        estimate.get("last_nav_date")
-        or estimate.get("lastNavDate")
-        or fund.get("lastNavDate"),
-        today=today,
-    )
-    if not nav_date:
+    if estimate and not normalize_observed_day(estimate.get("last_nav_date") or estimate.get("lastNavDate")):
         return ""
-
-    publish_date = normalize_observed_day(
-        estimate.get("last_nav_publish_date")
-        or estimate.get("lastNavPublishDate")
-        or fund.get("lastNavPublishDate")
-        or fund.get("last_nav_publish_date"),
-        today=today,
-    )
-    if publish_date >= nav_date:
+    nav_date, publish_date = _official_nav_dates(fund, estimate)
+    if not nav_date or publish_date:
         return publish_date
 
-    display_date = normalize_observed_day(
-        estimate.get("display_date") or estimate.get("displayDate") or fund.get("displayDate"),
-        today=today,
-    )
-    if display_date >= nav_date:
-        return display_date
-
-    confirm_days = _estimate_confirm_days(fund, estimate)
-    if confirm_days == 1:
-        return nav_date
-
-    pair = estimate.get("estimate_vs_actual") or estimate.get("estimateVsActual")
-    if not isinstance(pair, dict):
-        pair = fund.get("estimateVsActual") or fund.get("estimate_vs_actual")
-    if isinstance(pair, dict):
-        paired_nav_date = normalize_observed_day(pair.get("nav_date"), today=today)
-        paired_publish_date = normalize_observed_day(pair.get("publish_date"), today=today)
-        if paired_nav_date == nav_date and paired_publish_date >= nav_date:
-            return paired_publish_date
-    return ""
+    for source in (estimate, fund):
+        source_nav_date = normalize_observed_day(source.get("last_nav_date") or source.get("lastNavDate"))
+        if source_nav_date == nav_date and source.get("source") == "official_published":
+            display_date = normalize_observed_day(source.get("display_date") or source.get("displayDate"))
+            if display_date >= nav_date:
+                return display_date
+    coherent_fund = fund if normalize_observed_day(fund.get("lastNavDate")) == nav_date else {}
+    return nav_date if _estimate_confirm_days(coherent_fund, estimate) == 1 else ""
 
 
 def js_round(value: float, digits: int) -> float:
@@ -438,16 +454,7 @@ def calc_fund_stats(fund: dict, estimate: Optional[dict] = None) -> dict:
     target_nav_date = normalize_observed_day(
         estimate.get("target_nav_date") or estimate.get("targetNavDate")
     )
-    latest_official_nav_date = normalize_observed_day(
-        estimate.get("last_nav_date")
-        or estimate.get("lastNavDate")
-        or fund.get("lastNavDate")
-    )
-    last_nav_publish_date = normalize_observed_day(
-        estimate.get("last_nav_publish_date")
-        or estimate.get("lastNavPublishDate")
-        or fund.get("lastNavPublishDate")
-    )
+    latest_official_nav_date, last_nav_publish_date = _official_nav_dates(fund, estimate)
     effective_date = (
         official_attribution_date
         if source == "official_published"

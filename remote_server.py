@@ -86,6 +86,7 @@ mcp.remove_tool("set_token")
 _REMOTE_TOOL_DESCRIPTIONS = {
     "get_summary": (
         "轻量查询总资产、今日收益、持有收益及完整度；只问组合汇总时使用。"
+        "收益日期读取 returnAttributionDate，并检查 displayedDayCompleteness；不同 G 日不得相加。"
         "综合投资分析改用 get_quant_strategy_context(view='compact')。"
     ),
     "get_records": (
